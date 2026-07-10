@@ -1,0 +1,52 @@
+[
+  {
+    "bug_id": "BUG-018",
+    "title": "LAN bridge reload causes DHCP lease failure",
+    "module": "dhcp/netifd",
+    "symptom": "client cannot obtain IP after firmware upgrade",
+    "root_cause": "DHCP service starts before bridge interface is ready",
+    "fix": "wait for bridge ready event before restarting DHCP server",
+    "keywords": ["dhcp", "lease allocation failed", "netifd", "bridge", "upgrade"],
+    "related_files": ["netifd_reload.c", "dhcp_server.c"]
+  },
+  {
+    "bug_id": "BUG-027",
+    "title": "PPPoE authentication retry stops after link flap",
+    "module": "wan/pppoe",
+    "symptom": "PPPoE cannot reconnect after WAN link recovers",
+    "root_cause": "retry timer is not restarted when link state changes from down to up",
+    "fix": "restart PPPoE authentication timer on WAN link up event",
+    "keywords": ["pppoe", "auth failed", "wan", "retry", "link flap"],
+    "related_files": ["pppoe_client.c"]
+  },
+  {
+    "bug_id": "BUG-033",
+    "title": "Wi-Fi clients disconnect during channel switch",
+    "module": "wifi",
+    "symptom": "clients disconnect when auto channel selection runs",
+    "root_cause": "channel switch event clears station table before reassociation window",
+    "fix": "delay station cleanup until channel switch completion event",
+    "keywords": ["wifi", "disconnect", "channel switch", "station table"],
+    "related_files": ["wifi_manager.c"]
+  },
+  {
+    "bug_id": "BUG-041",
+    "title": "TR-069 inform fails after DNS update",
+    "module": "management/tr069",
+    "symptom": "ACS inform fails after DNS configuration change",
+    "root_cause": "TR-069 client keeps stale resolver cache after DNS reload",
+    "fix": "clear resolver cache before next inform request",
+    "keywords": ["tr069", "acs", "dns", "inform", "resolver"],
+    "related_files": ["tr069_report.c"]
+  },
+  {
+    "bug_id": "BUG-052",
+    "title": "Configuration migration loses DHCP address pool",
+    "module": "upgrade/config",
+    "symptom": "LAN clients cannot obtain IP after firmware upgrade",
+    "root_cause": "old DHCP pool key is not mapped to new config schema",
+    "fix": "add migration rule for lan.dhcp.pool_start and lan.dhcp.pool_end",
+    "keywords": ["upgrade", "dhcp", "migration", "address pool", "config"],
+    "related_files": ["dhcp_server.c"]
+  }
+]

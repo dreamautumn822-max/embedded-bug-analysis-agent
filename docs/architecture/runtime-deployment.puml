@@ -1,0 +1,34 @@
+@startuml
+title 嵌入式网通设备 Bug 分析 Agent - 本地运行部署图
+
+skinparam shadowing false
+skinparam nodeStyle rectangle
+
+node "开发机器\n/home/sdmc/AgentProject" as Host {
+  artifact ".env" as Env
+  node "Python 虚拟环境\n.venv/" as Venv {
+    component "FastAPI / Uvicorn\n127.0.0.1:9000" as API
+    component "Streamlit\n127.0.0.1:8501" as UI
+    component "评估脚本\nscripts/evaluate.py" as Eval
+  }
+
+  database "本地数据" as Data {
+    folder "data/docs" as Docs
+    folder "data/bugs" as Bugs
+    folder "data/codebase" as Code
+    folder ".chroma" as Chroma
+  }
+}
+
+cloud "OpenAI 兼容 LLM 网关\nLLM_BASE_URL" as Gateway
+
+UI --> API : BUG_AGENT_API_URL
+API --> Gateway : LLM_BASE_URL\nLLM_API_KEY\nLLM_MODEL
+Eval --> Gateway : 使用 --load-env 且 LLM_ENABLED=true 时
+API --> Data : 文档 / Bug / 代码
+Eval --> Data : eval_cases.json
+Env --> API : 启动前由 shell 加载
+Env --> UI : 超时时间 + API 地址
+Env --> Eval : --load-env
+
+@enduml

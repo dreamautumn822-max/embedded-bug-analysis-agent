@@ -1,0 +1,96 @@
+@startuml
+title 嵌入式网通设备 Bug 分析 Agent - LangGraph 状态流
+
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #F8FAF8
+  BorderColor #263033
+  DiamondBackgroundColor #FFF1CC
+  DiamondBorderColor #D6B45A
+}
+
+start
+
+:初始化 BugAnalysisState;
+note right
+设备型号 device_model
+固件版本 firmware_version
+故障现象 symptom
+日志 logs
+堆栈 stack_trace
+模块提示 module_hint
+end note
+
+:extract_bug_info_node;
+note right
+调用 extract_bug_info()
+写入：
+- 提取信息 extracted_info
+- Bug 类型 bug_type
+end note
+
+:parse_logs_node;
+note right
+调用 parse_syslog()
+写入解析日志 parsed_logs：
+- 模块 modules
+- 错误模式 error_patterns
+- 事件 events
+- 证据 evidence
+end note
+
+:search_bug_history_node;
+note right
+根据故障现象、关键词、
+错误模式构造查询。
+写入相关历史 Bug related_bugs。
+end note
+
+:search_codebase_node;
+note right
+根据故障现象、关键词、
+事件构造查询。
+写入相关代码线索 related_code。
+end note
+
+:retrieve_related_docs_node;
+note right
+对 data/docs 下的 Markdown
+文档做关键词重叠评分。
+写入相关文档 related_docs。
+end note
+
+:generate_hypotheses_node;
+if (LLMSettings 是否就绪？) then (是)
+  :调用 OpenAI 兼容 LLM;
+  if (JSON 合法且通过 Pydantic 校验？) then (是)
+    :使用 LLM 生成的根因假设\n和修复建议;
+  else (否)
+    :兜底到规则链;
+  endif
+else (否)
+  :使用规则根因分析链;
+endif
+
+:generate_report_node;
+note right
+构建证据链：
+- 日志 log
+- 文档 doc
+- 历史 Bug bug
+- 代码 code
+调用 generate_report()
+end note
+
+:最终 BugAnalysisState;
+note right
+Bug 类型 bug_type
+根因假设 hypotheses
+证据链 evidence
+修复建议 fix_suggestions
+最终报告 final_report
+end note
+
+stop
+
+@enduml

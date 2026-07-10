@@ -1,0 +1,32 @@
+@startuml
+title 嵌入式网通设备 Bug 分析 Agent - 评估流程
+
+skinparam shadowing false
+
+actor "开发者" as Dev
+database "data/bugs/eval_cases.json" as Cases
+participant "scripts/evaluate.py" as Eval
+participant "parse_syslog()" as Parser
+participant "analyze_bug()" as Agent
+participant "evaluate_case_result()\n评估指标计算" as Metrics
+
+Dev -> Eval : python scripts/evaluate.py\n--disable-llm / --load-env --repeat N
+Eval -> Cases : 加载评估用例
+
+loop 遍历每个用例
+  Eval -> Parser : 解析日志
+  Parser --> Eval : parser_ok 输入
+
+  loop 重复 N 次
+    Eval -> Agent : analyze_bug(case)
+    Agent --> Eval : BugAnalysisState
+    Eval -> Metrics : 对比期望结果和实际结果
+    Metrics --> Eval : classification_ok\nroot_cause_ok\nevidence_ok\nparser_ok
+  end
+
+  Eval -> Eval : 汇总同一用例多次运行稳定性
+end
+
+Eval --> Dev : classification_accuracy\nparser_coverage\nroot_cause_hit_rate\nevidence_coverage\noutput_stability
+
+@enduml

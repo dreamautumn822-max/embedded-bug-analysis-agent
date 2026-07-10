@@ -1,0 +1,79 @@
+@startuml
+title 嵌入式网通设备 Bug 分析 Agent - 系统组件图
+
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+actor "用户 / 面试演示" as User
+
+package "前端层" {
+  component "Streamlit 前端页面\nui/streamlit_app.py" as UI
+}
+
+package "API 层" {
+  component "FastAPI 应用\napp/main.py" as API
+  component "Pydantic 请求响应模型\napp/schemas/bug.py" as Schemas
+}
+
+package "Agent 编排层" {
+  component "LangGraph 工作流\napp/graph/bug_analysis_graph.py" as Graph
+  component "图节点实现\napp/graph/nodes.py" as Nodes
+  component "状态结构 TypedDict\napp/graph/state.py" as State
+}
+
+package "领域规则链" {
+  component "Bug 信息提取链\napp/chains/extract_chain.py" as Extract
+  component "规则根因分析链\napp/chains/root_cause_chain.py" as RuleCause
+  component "报告生成链\napp/chains/report_chain.py" as Report
+}
+
+package "LLM 接入层" {
+  component "LLM 配置\napp/llm/config.py" as LLMConfig
+  component "OpenAI 兼容客户端\napp/llm/client.py" as LLMClient
+  component "LLM 输出模型\napp/llm/schemas.py" as LLMSchemas
+  cloud "OpenAI 兼容 LLM\nDeepSeek / Qwen / OpenAI / 内部网关" as LLM
+}
+
+package "检索与工具层" {
+  component "系统日志解析器\napp/tools/log_parser.py" as LogParser
+  component "历史 Bug 检索\napp/tools/bug_history_search.py" as BugSearch
+  component "代码线索检索\napp/tools/code_search.py" as CodeSearch
+  component "Markdown 文档加载器\napp/rag/loader.py" as Loader
+  component "Chroma 向量库\napp/rag/vector_store.py" as VectorStore
+}
+
+database "data/bugs\nbug_history.json\neval_cases.json" as BugData
+database "data/docs\n模块文档" as Docs
+database "data/codebase\n模拟 C 代码" as CodeData
+database ".chroma\n本地向量索引" as Chroma
+
+User --> UI : 输入设备信息和日志
+UI --> API : POST /analyze
+API --> Schemas : 校验请求和响应
+API --> Graph : analyze_bug()
+Graph --> Nodes : 执行状态图
+Nodes --> State : 读写状态
+
+Nodes --> Extract
+Nodes --> LogParser
+Nodes --> BugSearch
+Nodes --> CodeSearch
+Nodes --> Loader
+Nodes --> LLMConfig
+Nodes --> LLMClient
+Nodes --> RuleCause : 兜底分析
+Nodes --> Report
+
+LLMClient --> LLMSchemas : 校验 JSON
+LLMClient --> LLM : chat.completions.create()
+
+BugSearch --> BugData
+CodeSearch --> CodeData
+Loader --> Docs
+VectorStore --> Chroma
+
+API --> UI : 结构化分析报告
+UI --> User : 诊断看板 / 证据总线
+
+@enduml

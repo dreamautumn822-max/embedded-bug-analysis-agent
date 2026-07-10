@@ -1,0 +1,48 @@
+@startuml
+title 嵌入式网通设备 Bug 分析 Agent - API 分析时序图
+
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+actor 用户 as User
+participant "Streamlit 前端页面\nui/streamlit_app.py" as UI
+participant "FastAPI\napp/main.py" as API
+participant "Pydantic 请求模型\nBugAnalyzeRequest" as Req
+participant "LangGraph\nanalyze_bug()" as Graph
+participant "图节点" as Nodes
+participant "LLM 客户端\napp/llm/client.py" as LLMClient
+participant "OpenAI 兼容 LLM" as LLM
+participant "Pydantic 输出模型\nLLMRootCauseResult" as LLMSchema
+participant "Pydantic 响应模型\nBugAnalyzeResponse" as Resp
+
+User -> UI : 填写设备 / 固件 / 现象 / 日志
+User -> UI : 点击“分析 Bug”
+UI -> API : POST /analyze JSON
+API -> Req : 校验必填字段
+Req --> API : BugAnalyzeRequest
+
+API -> Graph : analyze_bug(...)
+Graph -> Nodes : 执行工作流
+
+Nodes -> Nodes : 解析日志\n检索历史 Bug / 文档 / 代码
+Nodes -> LLMClient : generate_root_cause_with_llm(...)
+
+alt LLM 就绪且输出合法
+  LLMClient -> LLM : chat.completions.create(messages)
+  LLM --> LLMClient : JSON 文本
+  LLMClient -> LLMSchema : model_validate(JSON)
+  LLMSchema --> LLMClient : 结构化根因假设
+  LLMClient --> Nodes : LLMRootCauseResult
+else 未启用 / API 错误 / JSON 非法
+  LLMClient --> Nodes : 抛出错误
+  Nodes -> Nodes : 兜底到规则链
+end
+
+Nodes --> Graph : 最终状态
+Graph --> API : BugAnalysisState
+API -> Resp : 构建响应模型
+Resp --> API : BugAnalyzeResponse
+API --> UI : JSON 分析报告
+UI --> User : 诊断看板 + 证据总线
+
+@enduml

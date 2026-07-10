@@ -1,0 +1,38 @@
+@startuml
+title 嵌入式网通设备 Bug 分析 Agent - LLM 与规则兜底流程
+
+skinparam shadowing false
+
+start
+:generate_hypotheses_node 接收状态;
+:读取 LLMSettings.from_env();
+
+if (LLM_ENABLED 为 true\n且 base_url/api_key/model 完整？) then (就绪)
+  :根据现象、日志、历史 Bug、\n文档、代码构建提示词;
+  :调用 OpenAI 兼容的\nchat completions API;
+  if (请求成功？) then (是)
+    :提取 message content;
+    if (JSON 解析成功？) then (是)
+      :使用 LLMRootCauseResult\n进行结构校验;
+      if (Pydantic 校验成功？) then (是)
+        :返回 LLM 根因假设\n和修复建议;
+        stop
+      else (否)
+        :结构校验错误;
+      endif
+    else (否)
+      :JSON 格式非法;
+    endif
+  else (否)
+    :网络或 API 错误;
+  endif
+else (未就绪)
+  :LLM 未启用或配置不完整;
+endif
+
+:兜底调用 generate_root_cause_hypotheses();
+:根据 bug_type 构建确定性的修复建议;
+:返回规则链根因假设\n和修复建议;
+stop
+
+@enduml
