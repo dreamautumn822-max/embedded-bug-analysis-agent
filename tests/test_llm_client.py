@@ -64,13 +64,20 @@ def test_build_root_cause_prompt_includes_evidence_context():
         symptom="DHCP clients cannot get IP",
         parsed_logs={"error_patterns": ["lease allocation failed"]},
         related_bugs=[{"bug_id": "BUG-018", "root_cause": "DHCP starts too early"}],
-        related_docs=[{"source": "dhcp.md", "snippet": "# DHCP 模块说明"}],
+        related_docs=[
+            {
+                "source": "dhcp.md",
+                "content": "DHCP server 必须等待 bridge ready 后启动。",
+                "snippet": "DHCP 模块说明",
+            }
+        ],
         related_code=[{"file": "netifd_reload.c", "line": 3, "snippet": "restart_dhcp_server();"}],
     )
 
     assert "network_dhcp" in prompt
     assert "lease allocation failed" in prompt
     assert "BUG-018" in prompt
+    assert "bridge ready 后启动" in prompt
     assert "netifd_reload.c:3" in prompt
 
 

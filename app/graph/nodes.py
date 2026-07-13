@@ -1,3 +1,5 @@
+import logging
+
 from app.chains.extract_chain import extract_bug_info
 from app.chains.report_chain import generate_report
 from app.chains.root_cause_chain import generate_root_cause_hypotheses
@@ -6,9 +8,13 @@ from app.llm.client import generate_root_cause_with_llm
 from app.llm.config import LLMSettings
 from app.paths import BUG_HISTORY_PATH, CODEBASE_DIR, DOCS_DIR
 from app.rag.loader import load_markdown_docs
+from app.rag.retriever import retrieve_related_documents
 from app.tools.bug_history_search import search_bug_history
 from app.tools.code_search import search_codebase
 from app.tools.log_parser import parse_syslog
+
+
+logger = logging.getLogger(__name__)
 
 
 def extract_bug_info_node(state: BugAnalysisState) -> dict:
@@ -56,6 +62,17 @@ def retrieve_related_docs_node(state: BugAnalysisState) -> dict:
             " ".join(state["parsed_logs"].get("events", [])),
         ]
     )
+    try:
+        related_docs = retrieve_related_documents(query)
+        if related_docs:
+            return {"related_docs": related_docs}
+    except Exception as exc:
+        logger.warning("Chroma retrieval failed; using keyword fallback: %s", exc)
+
+    return {"related_docs": _keyword_related_documents(query)}
+
+
+def _keyword_related_documents(query: str) -> list[dict]:
     query_tokens = _doc_tokens(query)
     related_docs: list[dict] = []
 
@@ -67,12 +84,14 @@ def retrieve_related_docs_node(state: BugAnalysisState) -> dict:
                 {
                     "source": doc.metadata["source"],
                     "score": score,
-                    "snippet": doc.page_content.strip().splitlines()[0],
+                    "snippet": _first_content_paragraph(doc.page_content),
+                    "content": doc.page_content.strip(),
+                    "retrieval_method": "keyword_fallback",
                 }
             )
 
     related_docs.sort(key=lambda item: item["score"], reverse=True)
-    return {"related_docs": related_docs[:2]}
+    return related_docs[:2]
 
 
 def generate_hypotheses_node(state: BugAnalysisState) -> dict:
@@ -155,3 +174,11 @@ def generate_report_node(state: BugAnalysisState) -> dict:
 
 def _doc_tokens(text: str) -> set[str]:
     return {token.lower() for token in text.replace("-", " ").replace("_", " ").split()}
+
+
+def _first_content_paragraph(content: str) -> str:
+    for paragraph in content.split("\n\n"):
+        stripped = paragraph.strip()
+        if stripped and not stripped.startswith("#"):
+            return " ".join(line.strip() for line in stripped.splitlines())
+    return content.strip().splitlines()[0]

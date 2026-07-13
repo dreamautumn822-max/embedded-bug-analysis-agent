@@ -10,6 +10,7 @@ participant "FastAPI\napp/main.py" as API
 participant "Pydantic 请求模型\nBugAnalyzeRequest" as Req
 participant "LangGraph\nanalyze_bug()" as Graph
 participant "图节点" as Nodes
+participant "Chroma 文档检索器\napp/rag/retriever.py" as Retriever
 participant "LLM 客户端\napp/llm/client.py" as LLMClient
 participant "OpenAI 兼容 LLM" as LLM
 participant "Pydantic 输出模型\nLLMRootCauseResult" as LLMSchema
@@ -24,7 +25,14 @@ Req --> API : BugAnalyzeRequest
 API -> Graph : analyze_bug(...)
 Graph -> Nodes : 执行工作流
 
-Nodes -> Nodes : 解析日志\n检索历史 Bug / 文档 / 代码
+Nodes -> Nodes : 解析日志\n检索历史 Bug / 代码
+Nodes -> Retriever : 同步索引并执行向量 Top-K 检索
+alt Chroma 返回有效文档
+  Retriever --> Nodes : 文档内容 / 来源 / 相关度
+else 索引异常或无有效结果
+  Retriever --> Nodes : 异常或空结果
+  Nodes -> Nodes : 回退到文档关键词检索
+end
 Nodes -> LLMClient : generate_root_cause_with_llm(...)
 
 alt LLM 就绪且输出合法

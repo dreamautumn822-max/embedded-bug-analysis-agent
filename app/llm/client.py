@@ -50,7 +50,7 @@ def build_root_cause_prompt(
             _format_records(related_bugs, ["bug_id", "symptom", "root_cause", "fix"]),
             "",
             "模块文档:",
-            _format_records(related_docs, ["source", "snippet", "score"]),
+            _format_records(related_docs, ["source", "content", "snippet", "score"]),
             "",
             "代码线索:",
             _format_code_records(related_code),

@@ -79,7 +79,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-当前项目默认走本地 deterministic workflow 和 fake embeddings，演示不需要 OpenAI API Key。
+当前项目默认走本地确定性规则链和 `LocalHashEmbeddings`，演示不需要模型 API Key。
 
 ---
 
@@ -99,12 +99,13 @@ Indexed documents into .chroma
 
 说明：
 
-- 该脚本默认使用 fake embeddings
-- 不需要 OpenAI API Key
+- 该脚本默认使用确定性的本地词法向量
+- 默认不需要 Embedding API Key
 - 索引会写入 `.chroma/`
 - `.chroma/` 已被 `.gitignore` 忽略
+- API 首次分析也会自动同步索引，手动执行脚本用于提前构建和检查索引
 
-如果看到 Chroma telemetry warning，只要最后输出 `Indexed documents into .chroma`，就不影响本地演示。
+成功输出会包含文档数量、索引目录、collection 名称和 Embedding provider。
 
 ---
 
@@ -442,15 +443,15 @@ Streamlit 指定 API 地址：
 BUG_AGENT_API_URL=http://127.0.0.1:9000/analyze streamlit run ui/streamlit_app.py
 ```
 
-### 11.5 Chroma telemetry warning
+### 11.5 Chroma 或 Embedding 检索异常
 
-如果运行 `scripts/ingest_docs.py` 时看到类似 telemetry warning，但最后输出：
+先单独重建并检查索引：
 
-```text
-Indexed documents into .chroma
+```bash
+python scripts/ingest_docs.py
 ```
 
-可以忽略。
+使用远程语义 Embedding 时，确认 `EMBEDDING_PROVIDER=openai`，并检查 `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY` 和 `EMBEDDING_MODEL`。检索异常不会中断分析流程，文档节点会记录 warning 并回退到关键词检索。
 
 ---
 

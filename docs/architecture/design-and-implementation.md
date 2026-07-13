@@ -48,6 +48,7 @@ app/
     client.py                 OpenAI-compatible LLM 调用
     schemas.py                LLM 输出 Pydantic schema
   rag/
+    config.py                 RAG 与 Embedding 配置
     loader.py                 Markdown 文档加载
     vector_store.py           Chroma / Embedding 构建
     retriever.py              文档 retriever
@@ -190,7 +191,10 @@ extract_bug_info
 - `app/tools/log_parser.py`
 - `app/tools/bug_history_search.py`
 - `app/tools/code_search.py`
+- `app/rag/config.py`
 - `app/rag/loader.py`
+- `app/rag/vector_store.py`
+- `app/rag/retriever.py`
 
 职责：
 
@@ -198,12 +202,9 @@ extract_bug_info
 - 从 `bug_history.json` 检索相似历史 Bug。
 - 从 `data/codebase` 检索相关 C 代码片段。
 - 从 `data/docs` 加载模块文档。
+- 将模块文档同步到 Chroma，并执行向量相似度检索。
 
-当前文档检索在 `retrieve_related_docs_node()` 里使用简单 token overlap 评分。
-
-注意：
-
-项目里也有 `app/rag/vector_store.py` 和 `scripts/ingest_docs.py`，用于 Chroma 索引构建。当前 LangGraph 文档检索节点走的是轻量 token 检索，方便无 API key 演示。后续可以进一步切换为向量检索。
+`retrieve_related_docs_node()` 已接入 Chroma。默认的 `LocalHashEmbeddings` 使用确定性词法特征，不需要 API Key；配置 `EMBEDDING_PROVIDER=openai` 后可改用 OpenAI-compatible 语义 Embedding。索引或查询异常、召回结果低于阈值时，节点自动回退到 token overlap 检索，避免文档检索故障中断整条分析链。
 
 ### 3.5 LLM 层
 
@@ -509,10 +510,12 @@ retrieve_related_docs_node()
 
 当前实现：
 
-- 加载 Markdown。
-- 对 query 和文档内容做简单 token 化。
-- 用交集数量做 score。
-- 取前 2 个文档。
+- 把故障现象、抽取关键词、错误模式和关键事件拼成检索 query。
+- 加载 Markdown，并按来源和内容哈希生成稳定文档 ID。
+- 自动把新增或变更文档写入 Chroma，并删除已经失效的索引记录。
+- 使用配置的 Embedding 生成查询向量，按余弦相似度召回 Top-K 文档。
+- 过滤低于 `RAG_SCORE_THRESHOLD` 的结果。
+- Chroma 或远程 Embedding 失败、结果为空时，回退到本地 token overlap 检索。
 
 输出：
 
@@ -522,6 +525,14 @@ retrieve_related_docs_node()
 
 - `dhcp.md`
 - `upgrade.md`
+
+每条结果包含：
+
+- `source`：文档文件名。
+- `content`：交给 LLM 的完整文档内容。
+- `snippet`：证据总线展示的首个正文段落。
+- `score`：向量相关度分数。
+- `retrieval_method`：`chroma_vector` 或 `keyword_fallback`。
 
 ### Step 9：生成根因假设和修复建议
 
@@ -793,6 +804,23 @@ BUG_AGENT_API_TIMEOUT_SECONDS=90 \
 - 提供模块机制说明。
 - 给 LLM 上下文增加领域知识。
 - 给前端证据总线提供 DOC 证据。
+
+检索链路：
+
+```text
+Markdown 文档
+  -> LangChain Document
+  -> LocalHashEmbeddings 或 OpenAI-compatible Embedding
+  -> Chroma 持久化索引
+  -> 查询向量相似度 Top-K
+  -> 分数阈值过滤
+  -> related_docs
+  -> 注入 LLM 根因分析 Prompt
+```
+
+`build_vector_store()` 创建以余弦距离为度量的 Chroma collection。collection 名称包含 Embedding provider、模型、地址和知识目录的配置摘要，切换模型时不会误用旧向量。`sync_vector_store()` 使用“来源 + 内容哈希”生成稳定 ID，因此重复启动不会重复写入，文档修改和删除也会同步反映到索引。
+
+默认的本地 Hash Embedding 保障离线可运行和测试结果稳定，但只擅长字面相关性。生产环境应使用真实语义 Embedding，并通过评估集调整 `RAG_TOP_K` 和 `RAG_SCORE_THRESHOLD`。
 
 ### 7.3 代码线索
 
@@ -1109,6 +1137,9 @@ plantuml docs/architecture/*.puml
 - 本地日志解析。
 - 历史 Bug 检索。
 - 模块文档检索。
+- Chroma 持久化向量召回与自动增量同步。
+- 本地词法 Embedding / OpenAI-compatible 语义 Embedding 切换。
+- 向量检索异常时关键词 fallback。
 - 代码线索检索。
 - OpenAI-compatible LLM 接入。
 - Pydantic 结构化输出校验。
@@ -1118,7 +1149,6 @@ plantuml docs/architecture/*.puml
 
 仍可继续增强：
 
-- 文档检索从 token overlap 切换为 Chroma retriever。
 - 增加 hybrid search：向量检索 + 关键词检索。
 - 增加 rerank。
 - 增加 LangSmith / 自定义 trace。

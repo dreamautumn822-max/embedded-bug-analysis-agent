@@ -39,8 +39,11 @@ package "检索与工具层" {
   component "系统日志解析器\napp/tools/log_parser.py" as LogParser
   component "历史 Bug 检索\napp/tools/bug_history_search.py" as BugSearch
   component "代码线索检索\napp/tools/code_search.py" as CodeSearch
+  component "RAG 配置\napp/rag/config.py" as RAGConfig
   component "Markdown 文档加载器\napp/rag/loader.py" as Loader
+  component "文档向量检索器\napp/rag/retriever.py" as Retriever
   component "Chroma 向量库\napp/rag/vector_store.py" as VectorStore
+  component "本地词法向量\nLocalHashEmbeddings" as LocalEmbedding
 }
 
 database "data/bugs\nbug_history.json\neval_cases.json" as BugData
@@ -59,7 +62,7 @@ Nodes --> Extract
 Nodes --> LogParser
 Nodes --> BugSearch
 Nodes --> CodeSearch
-Nodes --> Loader
+Nodes --> Retriever
 Nodes --> LLMConfig
 Nodes --> LLMClient
 Nodes --> RuleCause : 兜底分析
@@ -71,6 +74,10 @@ LLMClient --> LLM : chat.completions.create()
 BugSearch --> BugData
 CodeSearch --> CodeData
 Loader --> Docs
+Retriever --> RAGConfig
+Retriever --> VectorStore
+VectorStore --> Loader
+VectorStore --> LocalEmbedding : 默认
 VectorStore --> Chroma
 
 API --> UI : 结构化分析报告

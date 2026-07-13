@@ -21,9 +21,12 @@ node "开发机器\n/home/sdmc/AgentProject" as Host {
 }
 
 cloud "OpenAI 兼容 LLM 网关\nLLM_BASE_URL" as Gateway
+cloud "OpenAI 兼容 Embedding 服务\nEMBEDDING_BASE_URL" as EmbeddingGateway
 
 UI --> API : BUG_AGENT_API_URL
 API --> Gateway : LLM_BASE_URL\nLLM_API_KEY\nLLM_MODEL
+API --> EmbeddingGateway : EMBEDDING_PROVIDER=openai 时
+API --> Chroma : 向量索引同步与检索
 Eval --> Gateway : 使用 --load-env 且 LLM_ENABLED=true 时
 API --> Data : 文档 / Bug / 代码
 Eval --> Data : eval_cases.json

@@ -55,8 +55,11 @@ end note
 
 :retrieve_related_docs_node;
 note right
-对 data/docs 下的 Markdown
-文档做关键词重叠评分。
+同步 data/docs 下的 Markdown
+到 Chroma 持久化向量库，
+执行相似度 Top-K 检索；
+异常或无有效结果时
+回退到关键词匹配。
 写入相关文档 related_docs。
 end note
 

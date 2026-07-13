@@ -45,7 +45,7 @@ LangGraph 状态流定义在 `app/graph/bug_analysis_graph.py`，节点实现在
 | FastAPI | 提供 HTTP API |
 | Streamlit | 提供交互式分析页面 |
 | Pydantic | 请求参数和 LLM 结构化输出校验 |
-| Chroma | 本地文档向量索引实验能力 |
+| Chroma | 模块文档持久化向量索引与相似度召回 |
 | Pytest | 单元测试和工作流测试 |
 
 ## 快速开始
@@ -169,13 +169,34 @@ curl -X POST http://127.0.0.1:8000/analyze \
 | `data/logs/` | 示例设备日志 |
 | `data/bugs/eval_cases.json` | 自动评估数据集 |
 
-当前主工作流使用结构化匹配和关键词重叠完成历史 Bug、代码及文档检索。项目同时提供 Chroma 向量索引能力，用于演示 LangChain Document、Embedding 和 Retriever 的组合方式：
+主工作流对三类知识源采用不同检索策略：历史 Bug 和代码线索使用确定性关键词匹配，模块文档使用 Chroma 向量检索。首次分析时会自动创建索引，并根据文件内容哈希增量增加、更新或删除文档；也可以提前执行：
 
 ```bash
 python scripts/ingest_docs.py
 ```
 
-该命令使用 `FakeEmbeddings` 在 `.chroma/` 生成本地索引，不需要 API Key。当前 Chroma Retriever 尚未接入 LangGraph 主分析流程。
+默认使用确定性的 `LocalHashEmbeddings`，基于英文 token 与中文二元/三元片段构造归一化向量，不需要 API Key，适合离线演示和自动化测试。它是词法向量，不等同于语义 Embedding 模型。需要语义检索时，可配置 OpenAI-compatible Embedding 接口：
+
+```bash
+EMBEDDING_PROVIDER=openai
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_BASE_URL=https://your-provider.example.com/v1
+EMBEDDING_API_KEY=your-api-key
+```
+
+| 配置项 | 说明 | 默认值 |
+| --- | --- | --- |
+| `CHROMA_DIR` | Chroma 持久化目录 | `.chroma` |
+| `DOCS_DIR` | Markdown 知识库目录 | `data/docs` |
+| `RAG_TOP_K` | 每次最多召回的文档数 | `3` |
+| `RAG_SCORE_THRESHOLD` | 最低相关度阈值，范围 0 到 1 | `0.1` |
+| `EMBEDDING_PROVIDER` | `local` 或 `openai` | `local` |
+| `EMBEDDING_MODEL` | Embedding 模型或本地实现标识 | `local-hashing-v1` |
+| `EMBEDDING_DIMENSIONS` | 本地词法向量维度，仅 `local` 生效 | `1024` |
+| `EMBEDDING_BASE_URL` | OpenAI-compatible Embedding 地址 | - |
+| `EMBEDDING_API_KEY` | Embedding 服务密钥 | - |
+
+`retrieve_related_docs` 节点会把故障现象、抽取关键词、错误模式和关键事件组合成查询，通过 Chroma 取 Top-K 文档并把完整内容交给 LLM。若 Chroma 初始化、Embedding 请求或查询失败，或者结果全部低于阈值，节点会自动回退到本地关键词检索。
 
 ## 测试与评估
 
@@ -239,8 +260,8 @@ python scripts/evaluate.py --load-env --repeat 2
 ## 当前边界
 
 - 内置知识库和代码均为演示数据，不包含真实设备仓库或生产 Bug 数据。
-- 主流程的检索策略以关键词匹配为主，尚未加入向量召回、混合检索和重排序。
+- 模块文档已使用 Chroma 向量召回，但历史 Bug 和代码仍是关键词匹配，尚未加入统一混合检索和重排序。
 - 工作流当前为固定顺序执行，尚未加入低置信度分支、人工复核和断点恢复。
 - 项目暂未实现用户认证、分析任务持久化和多租户知识库隔离。
 
-后续计划包括将 Chroma Retriever 接入主流程、增加混合检索与重排序、完善节点级可观测性，并为低置信度结果增加人工复核分支。
+后续计划包括增加混合检索与重排序、完善节点级可观测性，并为低置信度结果增加人工复核分支。

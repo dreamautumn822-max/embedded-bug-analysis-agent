@@ -9,6 +9,52 @@ from app.graph.nodes import (
 )
 
 
+def _doc_retrieval_state():
+    return {
+        "symptom": "升级后 DHCP 客户端获取不到 IP",
+        "module_hint": "dhcp",
+        "bug_type": "network_dhcp",
+        "extracted_info": {"keywords": ["dhcp", "lease"]},
+        "parsed_logs": {"error_patterns": [], "events": []},
+    }
+
+
+def test_related_docs_node_uses_chroma_vector_results(monkeypatch):
+    vector_results = [
+        {
+            "source": "dhcp.md",
+            "score": 0.88,
+            "snippet": "DHCP 地址池负责分配租约。",
+            "content": "# DHCP\n\nDHCP 地址池负责分配租约。",
+            "retrieval_method": "chroma_vector",
+        }
+    ]
+    monkeypatch.setattr(
+        "app.graph.nodes.retrieve_related_documents",
+        lambda query: vector_results,
+    )
+
+    result = retrieve_related_docs_node(_doc_retrieval_state())
+
+    assert result["related_docs"] == vector_results
+
+
+def test_related_docs_node_falls_back_when_chroma_fails(monkeypatch):
+    def fail_retrieval(query):
+        raise RuntimeError("Chroma unavailable")
+
+    monkeypatch.setattr(
+        "app.graph.nodes.retrieve_related_documents",
+        fail_retrieval,
+    )
+
+    result = retrieve_related_docs_node(_doc_retrieval_state())
+
+    assert result["related_docs"]
+    assert result["related_docs"][0]["source"] == "dhcp.md"
+    assert result["related_docs"][0]["retrieval_method"] == "keyword_fallback"
+
+
 def test_graph_nodes_produce_report_for_dhcp():
     state = {
         "device_model": "AX3000 Router",
