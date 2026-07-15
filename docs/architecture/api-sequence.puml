@@ -4,53 +4,64 @@ title 嵌入式网通设备 Bug 分析 Agent - API 分析时序图
 skinparam shadowing false
 skinparam sequenceMessageAlign center
 
-actor 用户 as User
-participant "Streamlit 前端页面\nui/streamlit_app.py" as UI
-participant "FastAPI\napp/main.py" as API
-participant "Pydantic 请求模型\nBugAnalyzeRequest" as Req
-participant "LangGraph\nanalyze_bug()" as Graph
-participant "图节点" as Nodes
-participant "Chroma 文档检索器\napp/rag/retriever.py" as Retriever
-participant "LLM 客户端\napp/llm/client.py" as LLMClient
+actor "用户" as User
+participant "Streamlit 前端" as UI
+participant "FastAPI 接口" as API
+participant "Pydantic 请求模型" as Request
+participant "LangGraph 状态图" as Graph
+database "SQLite 检查点" as Checkpoint
+participant "日志解析器" as Parser
+participant "统一混合检索器" as Retriever
+database "Chroma 与 BM25 语料" as Knowledge
+participant "LLM 客户端" as LLMClient
 participant "OpenAI 兼容 LLM" as LLM
-participant "Pydantic 输出模型\nLLMRootCauseResult" as LLMSchema
-participant "Pydantic 响应模型\nBugAnalyzeResponse" as Resp
+participant "Pydantic 输出模型" as Output
+participant "复核判断节点" as Review
+participant "Prometheus 指标" as Metrics
 
-User -> UI : 填写设备 / 固件 / 现象 / 日志
-User -> UI : 点击“分析 Bug”
-UI -> API : POST /analyze JSON
-API -> Req : 校验必填字段
-Req --> API : BugAnalyzeRequest
+User -> UI : 输入设备、版本、现象和日志
+UI -> API : 提交可复核分析请求
+API -> Request : 校验输入
+API -> Graph : 使用新任务编号启动状态流
+Graph -> Parser : 解析日志
+Parser --> Graph : 错误模式、事件和证据
 
-API -> Graph : analyze_bug(...)
-Graph -> Nodes : 执行工作流
-
-Nodes -> Nodes : 解析日志\n检索历史 Bug / 代码
-Nodes -> Retriever : 同步索引并执行向量 Top-K 检索
-alt Chroma 返回有效文档
-  Retriever --> Nodes : 文档内容 / 来源 / 相关度
-else 索引异常或无有效结果
-  Retriever --> Nodes : 异常或空结果
-  Nodes -> Nodes : 回退到文档关键词检索
+loop 历史 Bug、代码、模块文档
+  Graph -> Retriever : 按来源类型执行统一检索
+  Retriever -> Knowledge : 向量与 BM25 双路召回
+  Retriever -> Retriever : 排名融合和候选重排
+  Retriever --> Graph : 证据、排名、分数和来源
 end
-Nodes -> LLMClient : generate_root_cause_with_llm(...)
 
-alt LLM 就绪且输出合法
-  LLMClient -> LLM : chat.completions.create(messages)
+Graph -> LLMClient : 请求结构化根因
+alt 模型就绪且输出合法
+  LLMClient -> LLM : 调用聊天补全接口
   LLM --> LLMClient : JSON 文本
-  LLMClient -> LLMSchema : model_validate(JSON)
-  LLMSchema --> LLMClient : 结构化根因假设
-  LLMClient --> Nodes : LLMRootCauseResult
-else 未启用 / API 错误 / JSON 非法
-  LLMClient --> Nodes : 抛出错误
-  Nodes -> Nodes : 兜底到规则链
+  LLMClient -> Output : 解析并校验
+  Output --> Graph : 根因与修复建议
+else 未启用、请求失败或输出非法
+  LLMClient --> Graph : 结构化降级原因
+  Graph -> Graph : 执行规则链
 end
 
-Nodes --> Graph : 最终状态
-Graph --> API : BugAnalysisState
-API -> Resp : 构建响应模型
-Resp --> API : BugAnalyzeResponse
-API --> UI : JSON 分析报告
-UI --> User : 诊断看板 + 证据总线
+Graph -> Review : 检查类型、置信度和证据数量
+alt 需要人工复核
+  Review -> Graph : 调用中断并返回复核载荷
+  Graph -> Checkpoint : 按任务编号保存完整状态
+  Graph --> API : 返回待复核状态和任务编号
+  API --> UI : 展示根因、证据摘要和复核原因
+  UI --> User : 等待人工决定
+  User -> UI : 填写复核人、意见并通过或驳回
+  UI -> API : 提交复核决定
+  API -> Graph : 使用恢复命令和相同任务编号
+  Graph -> Checkpoint : 读取检查点并恢复中断节点
+  Graph -> Graph : 保存复核决定并生成报告
+else 可自动报告
+  Review --> Graph : 标记不需要复核并生成报告
+end
 
+Graph -> Metrics : 记录节点、检索、降级和请求指标
+Graph --> API : 报告、证据、轨迹和复核状态
+API --> UI : 返回结构化 JSON
+UI --> User : 展示诊断、证据和执行轨迹
 @enduml

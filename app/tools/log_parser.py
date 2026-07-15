@@ -18,6 +18,7 @@ EVENT_KEYWORDS = {
     "wan link up": "wan link up",
     "wan link down": "wan link down",
     "retry timer stopped": "retry timer stopped",
+    "dns configuration changed": "dns configuration changed",
 }
 
 

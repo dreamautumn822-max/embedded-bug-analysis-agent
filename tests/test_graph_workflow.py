@@ -27,3 +27,17 @@ def test_bug_analysis_workflow_returns_dhcp_report():
     assert any("BUG-018" in item for item in result["evidence"])
     assert any("netifd_reload.c" in item for item in result["evidence"])
     assert "证据链" in result["final_report"]
+    assert result["generation_mode"] in {"llm", "rule"}
+    assert result["review_required"] is False
+    assert result["review_status"] == "not_required"
+    assert [event["node"] for event in result["trace_events"]] == [
+        "extract_bug_info",
+        "parse_logs",
+        "search_bug_history",
+        "search_codebase",
+        "retrieve_related_docs",
+        "generate_hypotheses",
+        "assess_review",
+        "generate_report",
+    ]
+    assert all(event["duration_ms"] >= 0 for event in result["trace_events"])

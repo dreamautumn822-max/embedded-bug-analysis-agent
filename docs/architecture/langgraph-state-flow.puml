@@ -10,90 +10,82 @@ skinparam activity {
 }
 
 start
-
-:初始化 BugAnalysisState;
+:初始化分析状态;
 note right
-设备型号 device_model
-固件版本 firmware_version
-故障现象 symptom
-日志 logs
-堆栈 stack_trace
-模块提示 module_hint
+输入设备、版本、现象、日志；
+初始化执行轨迹、降级原因、
+复核模式和复核状态。
 end note
 
-:extract_bug_info_node;
+:提取 Bug 信息;
+:解析系统日志;
+
+:检索历史 Bug;
 note right
-调用 extract_bug_info()
-写入：
-- 提取信息 extracted_info
-- Bug 类型 bug_type
+统一检索协议：
+Chroma 语义向量 + BM25
+-> 加权排名融合 -> 候选重排
+失败时回退关键词工具。
 end note
 
-:parse_logs_node;
+:检索代码线索;
 note right
-调用 parse_syslog()
-写入解析日志 parsed_logs：
-- 模块 modules
-- 错误模式 error_patterns
-- 事件 events
-- 证据 evidence
+tree-sitter 按 C 函数切分，
+保留函数名和源码起止行；
+命中后返回原文件绝对行号。
 end note
 
-:search_bug_history_node;
+:检索模块文档;
 note right
-根据故障现象、关键词、
-错误模式构造查询。
-写入相关历史 Bug related_bugs。
+Markdown 标题切分和重叠窗口，
+返回章节、稳定证据编号
+及完整检索来源元数据。
 end note
 
-:search_codebase_node;
-note right
-根据故障现象、关键词、
-事件构造查询。
-写入相关代码线索 related_code。
-end note
-
-:retrieve_related_docs_node;
-note right
-同步 data/docs 下的 Markdown
-到 Chroma 持久化向量库，
-执行相似度 Top-K 检索；
-异常或无有效结果时
-回退到关键词匹配。
-写入相关文档 related_docs。
-end note
-
-:generate_hypotheses_node;
-if (LLMSettings 是否就绪？) then (是)
-  :调用 OpenAI 兼容 LLM;
-  if (JSON 合法且通过 Pydantic 校验？) then (是)
-    :使用 LLM 生成的根因假设\n和修复建议;
+:生成根因假设;
+if (LLM 配置是否就绪？) then (是)
+  :调用 OpenAI 兼容模型;
+  if (JSON 是否通过 Pydantic 校验？) then (是)
+    :使用 LLM 根因和修复建议;
+    :记录生成模式为 LLM;
   else (否)
-    :兜底到规则链;
+    :记录结构化降级原因;
+    :使用确定性规则链;
   endif
 else (否)
-  :使用规则根因分析链;
+  :记录模型未启用;
+  :使用确定性规则链;
 endif
 
-:generate_report_node;
+:评估置信度和证据充分性;
+if (是否需要人工复核？) then (是)
+  :进入待人工复核分支;
+  if (是否启用持久化复核？) then (是)
+    :调用中断并生成复核载荷;
+    :SQLite 按任务编号保存检查点;
+    :等待人工通过或驳回;
+    :使用恢复命令继续中断节点;
+    :写入复核人、意见和决定;
+  else (否)
+    :仅把复核状态设为待处理;
+  endif
+else (否)
+  :复核状态设为不需要;
+endif
+
+:绑定证据并生成报告;
 note right
-构建证据链：
-- 日志 log
-- 文档 doc
-- 历史 Bug bug
-- 代码 code
-调用 generate_report()
+节点轨迹记录成功或降级；
+Prometheus 记录成功、降级、
+中断、异常、耗时和降级原因。
 end note
 
-:最终 BugAnalysisState;
+:返回最终分析状态;
 note right
-Bug 类型 bug_type
-根因假设 hypotheses
-证据链 evidence
-修复建议 fix_suggestions
-最终报告 final_report
+根因假设与证据
+修复建议与生成模式
+执行轨迹与降级原因
+人工复核状态与决定
 end note
-
 stop
-
 @enduml

@@ -23,12 +23,26 @@ def test_evaluate_case_result_scores_expected_terms():
                 "title": "DHCP service starts before bridge ready",
                 "description": "The bridge ready event is not awaited.",
                 "confidence": 0.91,
+                "evidence_ids": ["bug:BUG-018", "doc:dhcp"],
             }
         ],
         "evidence": [
             "bug: BUG-018 - DHCP service starts before bridge interface is ready",
             "doc: dhcp.md - DHCP module guide",
         ],
+        "evidence_details": [
+            {
+                "evidence_id": "bug:BUG-018",
+                "evidence_type": "bug",
+                "retrieval_method": "hybrid_rrf_rerank",
+            },
+            {
+                "evidence_id": "doc:dhcp",
+                "evidence_type": "doc",
+                "retrieval_method": "hybrid_rrf_rerank",
+            },
+        ],
+        "review_required": False,
     }
 
     score = evaluate_case_result(case, result, parser_ok=True)
@@ -37,6 +51,9 @@ def test_evaluate_case_result_scores_expected_terms():
     assert score["parser_ok"] is True
     assert score["root_cause_ok"] is True
     assert score["evidence_ok"] is True
+    assert score["citation_validity_ok"] is True
+    assert score["retrieval_provenance_ok"] is True
+    assert score["review_routing_ok"] is True
 
 
 def test_evaluate_case_result_detects_missing_root_cause_keyword():

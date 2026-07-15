@@ -1,0 +1,60 @@
+groups:
+  - name: embedded-bug-agent
+    rules:
+      - alert: BugAgentApiDown
+        expr: up{job="embedded-bug-agent-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Bug Agent API is unavailable
+          description: Prometheus has failed to scrape the API for more than one minute.
+
+      - alert: BugAgentHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(bug_agent_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Bug Agent p95 latency is above 20 seconds
+          description: Check LLM latency, model timeouts and retrieval duration.
+
+      - alert: BugAgentFallbackRateHigh
+        expr: |
+          sum(rate(bug_agent_node_runs_total{node="generate_hypotheses",status="fallback"}[10m]))
+          /
+          clamp_min(
+            sum(rate(bug_agent_node_runs_total{node="generate_hypotheses"}[10m])),
+            0.001
+          ) > 0.20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 20 percent of Agent node runs use fallback
+          description: Inspect fallback code labels and upstream LLM responses.
+
+      - alert: BugAgentLlmErrorRateHigh
+        expr: |
+          sum(rate(bug_agent_llm_requests_total{status=~"error|invalid_output"}[10m]))
+          /
+          clamp_min(sum(rate(bug_agent_llm_requests_total[10m])), 0.001) > 0.20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: LLM error or invalid-output rate is above 20 percent
+          description: Check provider availability, prompt contract and JSON validation failures.
+
+      - alert: BugAgentQueueBacklog
+        expr: bug_agent_queue_depth > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Bug analysis queue contains more than 20 jobs
+          description: Scale RQ workers or inspect slow model and retrieval calls.

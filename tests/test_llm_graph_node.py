@@ -54,6 +54,7 @@ def test_generate_hypotheses_node_uses_llm_when_ready(monkeypatch):
 
     assert result["hypotheses"][0]["title"].startswith("LLM 判断")
     assert result["fix_suggestions"] == ["LLM 建议等待 br-lan forwarding 后再启动 DHCP。"]
+    assert result["generation_mode"] == "llm"
 
 
 def test_generate_hypotheses_node_falls_back_when_llm_fails(monkeypatch):
@@ -74,3 +75,5 @@ def test_generate_hypotheses_node_falls_back_when_llm_fails(monkeypatch):
 
     assert result["hypotheses"][0]["title"] == "DHCP 服务启动早于 LAN bridge ready"
     assert "在 br-lan 进入 forwarding/ready 状态后再启动 DHCP server" in result["fix_suggestions"]
+    assert result["generation_mode"] == "rule"
+    assert result["fallback_reasons"][-1]["code"] == "llm_request_failed"

@@ -34,9 +34,12 @@
 ```text
 app/
   main.py                     FastAPI 入口
+  evidence.py                 结构化证据构建与根因引用绑定
   schemas/bug.py              API 请求/响应 Pydantic schema
   graph/
     bug_analysis_graph.py     LangGraph 工作流定义
+    checkpoint.py             SQLite checkpointer 构建
+    review_workflow.py        持久化任务启动、查询和恢复
     nodes.py                  每个图节点的实现
     state.py                  LangGraph 状态结构
   chains/
@@ -50,8 +53,17 @@ app/
   rag/
     config.py                 RAG 与 Embedding 配置
     loader.py                 Markdown 文档加载
+    splitter.py               标题感知的文档切分与稳定 chunk ID
     vector_store.py           Chroma / Embedding 构建
-    retriever.py              文档 retriever
+    ranking.py                BM25、分词和 RRF 排名融合
+    reranker.py               本地特征、FlashRank 与 CrossEncoder 重排
+    retriever.py              混合检索编排和降级
+    code_parser.py            tree-sitter C 函数级切分
+    evaluation.py             Recall、MRR、nDCG 等排序指标
+  evaluation/
+    case_schema.py            真实/合成评估 case 数据契约
+  observability/
+    metrics.py                Prometheus 指标定义
   tools/
     log_parser.py             日志解析工具
     bug_history_search.py     历史 Bug 检索
@@ -61,9 +73,11 @@ data/
   bugs/
     bug_history.json          历史 Bug 样例库
     eval_cases.json           评估集
+    real_eval_cases.example.json 真实脱敏 case 模板
   docs/                       模块文档
+  rag/
+    retrieval_eval_cases.json 检索评估集
   codebase/                   模拟 C 代码
-  logs/                       样例日志
 
 ui/
   streamlit_app.py            前端页面
@@ -71,6 +85,8 @@ ui/
 scripts/
   ingest_docs.py              构建本地 Chroma 索引
   evaluate.py                 自动化评估脚本
+  evaluate_retrieval.py       chunk 检索排序评估脚本
+  validate_eval_dataset.py    评估来源、标注和脱敏校验
 
 tests/                        单元测试与集成测试
 docs/architecture/            架构图和本文档
@@ -193,6 +209,7 @@ extract_bug_info
 - `app/tools/code_search.py`
 - `app/rag/config.py`
 - `app/rag/loader.py`
+- `app/rag/splitter.py`
 - `app/rag/vector_store.py`
 - `app/rag/retriever.py`
 
@@ -201,8 +218,8 @@ extract_bug_info
 - 从日志中提取模块、错误模式、事件和证据行。
 - 从 `bug_history.json` 检索相似历史 Bug。
 - 从 `data/codebase` 检索相关 C 代码片段。
-- 从 `data/docs` 加载模块文档。
-- 将模块文档同步到 Chroma，并执行向量相似度检索。
+- 从 `data/docs` 加载模块文档，按 Markdown 标题和长度切成 chunk。
+- 将 chunk 同步到 Chroma，并执行向量相似度检索。
 
 `retrieve_related_docs_node()` 已接入 Chroma。默认的 `LocalHashEmbeddings` 使用确定性词法特征，不需要 API Key；配置 `EMBEDDING_PROVIDER=openai` 后可改用 OpenAI-compatible 语义 Embedding。索引或查询异常、召回结果低于阈值时，节点自动回退到 token overlap 检索，避免文档检索故障中断整条分析链。
 
@@ -248,7 +265,7 @@ client.chat.completions.create(
 
 职责：
 
-- 使用历史 case 评估 Agent 效果。
+- 使用有来源标记的 case 评估 Agent 效果；仓库内样例明确标记为 synthetic。
 - 支持规则链评估和真实 LLM 评估。
 - 输出分类准确率、日志解析覆盖率、根因命中率、证据覆盖率和稳定性。
 
@@ -286,10 +303,19 @@ python scripts/evaluate.py --load-env --repeat 2
 - related_docs
 - related_bugs
 - related_code
+- generation_mode
+- fallback_reasons
+- trace_events
+- review_required
+- review_status
+- review_reasons
+- interactive_review
+- review_decision
 
 输出字段：
 - hypotheses
 - evidence
+- evidence_details
 - fix_suggestions
 - final_report
 ```
@@ -301,7 +327,7 @@ python scripts/evaluate.py --load-env --repeat 2
 - 流程清晰。
 - 每一步可测试。
 - 出错时能定位是哪一步问题。
-- 后续可增加新节点，比如 rerank、外部工单查询、设备状态查询。
+- 后续可增加新节点，比如外部工单查询、设备状态查询和人工复核。
 
 ## 5. 从用户点击到生成结果的完整流程
 
@@ -460,6 +486,8 @@ search_bug_history_node()
 
 - `data/bugs/bug_history.json`
 
+实现方式：历史记录先由 `app/rag/corpus.py` 转成 `source_type=bug` 的 LangChain `Document`，再复用 Chroma + BM25 + RRF + rerank 统一检索协议。只有双路检索失败或无结果时才调用 `search_bug_history()` 关键词工具，并记录结构化 fallback 原因。
+
 输出：
 
 - `related_bugs`
@@ -487,6 +515,8 @@ search_codebase_node()
 
 - `data/codebase/*.c`
 
+实现方式：`app/rag/code_parser.py` 使用 tree-sitter-c 构建语法树，提取 `function_definition`，递归解析 declarator 得到函数名，并把紧邻函数的注释一起放入 chunk。每个 `Document` 携带 `symbol/start_line/end_line/parser`，chunk ID 为 `code::<文件名>::<函数名>`。文件名、函数名拆词和函数正文共同参与混合检索；返回时在函数 chunk 内定位最佳行，再加上 `start_line` 换算为原文件绝对行号。没有函数定义或无法提取函数时保留文件级兜底 chunk。
+
 输出：
 
 - `related_code`
@@ -511,11 +541,15 @@ retrieve_related_docs_node()
 当前实现：
 
 - 把故障现象、抽取关键词、错误模式和关键事件拼成检索 query。
-- 加载 Markdown，并按来源和内容哈希生成稳定文档 ID。
-- 自动把新增或变更文档写入 Chroma，并删除已经失效的索引记录。
-- 使用配置的 Embedding 生成查询向量，按余弦相似度召回 Top-K 文档。
-- 过滤低于 `RAG_SCORE_THRESHOLD` 的结果。
-- Chroma 或远程 Embedding 失败、结果为空时，回退到本地 token overlap 检索。
+- 先按 Markdown 标题层级切分章节，再按 `RAG_CHUNK_SIZE` 和 `RAG_CHUNK_OVERLAP` 做二次切分。
+- 为每个 chunk 记录来源、章节路径、父级 ID、序号和稳定 chunk ID。
+- 自动把新增或变更 chunk 写入 Chroma，并删除已经失效的索引记录。
+- Chroma 向量检索和 BM25 各召回 `RAG_CANDIDATE_K` 个候选 chunk。
+- 向量分低于 `RAG_SCORE_THRESHOLD` 的候选会被过滤。
+- 使用加权 Reciprocal Rank Fusion（RRF）按名次融合并按 chunk ID 去重。
+- 使用本地特征、FlashRank 或 Sentence Transformers CrossEncoder 对融合候选重排，返回最终 `RAG_TOP_K`。
+- 任一召回路径失败时保留另一条路径；模型重排失败时降级到本地特征重排；两路都不可用时由图节点回退到 chunk 关键词匹配。
+- `fastembed` provider 默认使用 `BAAI/bge-small-zh-v1.5` 生成 512 维中文语义向量；`local` Hash provider 仅作为测试和词法回退。
 
 输出：
 
@@ -529,10 +563,15 @@ retrieve_related_docs_node()
 每条结果包含：
 
 - `source`：文档文件名。
-- `content`：交给 LLM 的完整文档内容。
+- `section` / `section_path`：chunk 所在章节及完整标题路径。
+- `chunk_id` / `parent_id`：稳定证据标识和父章节标识。
+- `content`：交给 LLM 的命中 chunk 内容。
 - `snippet`：证据总线展示的首个正文段落。
-- `score`：向量相关度分数。
-- `retrieval_method`：`chroma_vector` 或 `keyword_fallback`。
+- `vector_score` / `vector_rank`：向量召回分数和名次。
+- `bm25_score` / `bm25_rank`：BM25 分数和名次。
+- `fusion_score`：RRF 融合分。
+- `rerank_score` / `rank`：重排分和最终名次。
+- `retrieval_method` / `rerank_method`：实际执行的召回和重排策略。
 
 ### Step 9：生成根因假设和修复建议
 
@@ -581,6 +620,7 @@ generate_root_cause_with_llm()
 - related_bugs
 - related_docs
 - related_code
+- evidence_details（包含可引用的稳定 evidence_id）
 
 要求模型只返回 JSON：
 
@@ -590,7 +630,8 @@ generate_root_cause_with_llm()
     {
       "title": "string",
       "description": "string",
-      "confidence": 0.0
+      "confidence": 0.0,
+      "evidence_ids": ["doc:dhcp.md::...::000"]
     }
   ],
   "fix_suggestions": ["string"]
@@ -603,7 +644,7 @@ generate_root_cause_with_llm()
 LLMRootCauseResult.model_validate(payload)
 ```
 
-校验模型输出。
+校验模型输出。Prompt 明确要求 `evidence_ids` 只能引用给定证据清单中的 ID；报告节点还会过滤不存在的 ID，避免模型伪造文档、Bug 或代码来源。
 
 #### 规则链 fallback
 
@@ -634,7 +675,15 @@ fallback 触发条件：
 - LLM 返回非法 JSON
 - LLM JSON 不符合 Pydantic schema
 
-### Step 10：生成证据链和最终报告
+节点会写入 `generation_mode=llm|rule`。发生 fallback 时只记录错误类型和稳定错误码，不把 API Key、完整请求或供应商响应写入 trace。
+
+### Step 10：判断是否需要人工复核
+
+`assess_review_node()` 会检查 Bug 类型、第一根因置信度和证据类型数量。Bug 类型未知、置信度低于 `AGENT_REVIEW_CONFIDENCE_THRESHOLD`（默认 `0.70`），或有效证据类型少于两类时，LangGraph 条件边进入 `queue_human_review`。
+
+同步 `/analyze` 保持兼容，只把状态标记为 `pending` 后生成报告。持久化 `/analyses` 会设置 `interactive_review=true`，节点调用 `interrupt(payload)`；SQLite checkpointer 在 `LANGGRAPH_CHECKPOINT_PATH` 保存 thread，接口返回 `analysis_id` 和复核载荷。审批接口使用相同 `thread_id` 调用 `Command(resume=decision)`，节点恢复后写入 `approved/rejected`、复核人和意见，再继续报告节点。LangGraph 恢复时只重放中断节点，已经完成的日志解析和三路检索不会重跑。
+
+### Step 11：生成证据链和最终报告
 
 节点：
 
@@ -642,7 +691,7 @@ fallback 触发条件：
 generate_report_node()
 ```
 
-它会构造 `evidence`：
+它会先构造 `evidence_details`，为日志、文档 chunk、历史 Bug 和代码线索生成稳定 ID，并把根因假设绑定到有效证据；同时保留兼容旧前端的 `evidence` 字符串：
 
 ```text
 log: ...
@@ -659,9 +708,9 @@ generate_report()
 
 生成 `final_report` 文本。
 
-API 最终返回的是结构化 JSON，不直接返回 `final_report`。
+复核任务恢复后，报告末尾会记录通过或驳回、复核人和意见。API 最终返回的是结构化 JSON，不直接返回 `final_report`，完整 state 则持久化在 checkpoint 中。
 
-### Step 11：FastAPI 返回响应
+### Step 12：FastAPI 返回响应
 
 `app/main.py` 从最终 state 中取第一条 hypothesis：
 
@@ -676,13 +725,19 @@ BugAnalyzeResponse(
     bug_type=result["bug_type"],
     summary=top_hypothesis["title"],
     root_causes=[top_hypothesis["description"]],
+    hypotheses=result["hypotheses"],
     evidence=result["evidence"],
+    evidence_details=result["evidence_details"],
     fix_suggestions=result["fix_suggestions"],
     confidence=top_hypothesis["confidence"],
+    generation_mode=result["generation_mode"],
+    trace_events=result["trace_events"],
+    fallback_reasons=result["fallback_reasons"],
+    review_required=result["review_required"],
 )
 ```
 
-### Step 12：前端展示结果
+### Step 13：前端展示结果
 
 前端展示：
 
@@ -692,8 +747,11 @@ BugAnalyzeResponse(
 - root_causes
 - evidence bus
 - fix_suggestions
+- generation mode、人工复核原因
+- 可折叠的节点执行轨迹和 fallback 原因
+- 低置信度任务的复核人、复核意见以及通过/驳回操作
 
-证据分组逻辑：
+前端优先使用 `evidence_details.evidence_type` 分组。DOC 卡片会展示来源文件、章节和相似度，CODE 多条结果仍折叠显示；当后端是旧版本、没有 `evidence_details` 时，才回退到字符串前缀解析：
 
 ```python
 if item.startswith("log: "):
@@ -760,7 +818,7 @@ BUG_AGENT_API_TIMEOUT_SECONDS=90 \
 
 ## 7. RAG 和知识源设计
 
-本项目的 RAG 不是单一向量库问答，而是多来源证据组合。
+本项目的 RAG 不是单一向量库问答，而是多来源证据组合。`load_knowledge_chunks()` 把 DOC、BUG、CODE 统一为 `source_type/source/chunk_id/parent_id` 元数据协议，并写入同一个按配置隔离的 Chroma collection。三个图节点保留不同 query 构造方式，但底层都调用 `retrieve_knowledge_source()`。
 
 ### 7.1 历史 Bug
 
@@ -810,17 +868,26 @@ BUG_AGENT_API_TIMEOUT_SECONDS=90 \
 ```text
 Markdown 文档
   -> LangChain Document
-  -> LocalHashEmbeddings 或 OpenAI-compatible Embedding
-  -> Chroma 持久化索引
-  -> 查询向量相似度 Top-K
-  -> 分数阈值过滤
+  -> Markdown 标题层级切分
+  -> 长度上限与 overlap 切分
+  -> 带稳定 ID 和章节元数据的 chunk
+  -> [Chroma 向量召回 || BM25 关键词召回]
+  -> 加权 RRF 融合与 chunk ID 去重
+  -> 本地特征、FlashRank 或 CrossEncoder 重排
+  -> 最终 Top-K
   -> related_docs
   -> 注入 LLM 根因分析 Prompt
 ```
 
-`build_vector_store()` 创建以余弦距离为度量的 Chroma collection。collection 名称包含 Embedding provider、模型、地址和知识目录的配置摘要，切换模型时不会误用旧向量。`sync_vector_store()` 使用“来源 + 内容哈希”生成稳定 ID，因此重复启动不会重复写入，文档修改和删除也会同步反映到索引。
+`split_markdown_document()` 先用 `MarkdownHeaderTextSplitter` 保留标题语义，再用 `RecursiveCharacterTextSplitter` 控制 chunk 大小。默认 `chunk_size=300`、`chunk_overlap=50`，这里使用可离线复现的近似文本单元计数，而不是绑定某个在线模型的 tokenizer。
 
-默认的本地 Hash Embedding 保障离线可运行和测试结果稳定，但只擅长字面相关性。生产环境应使用真实语义 Embedding，并通过评估集调整 `RAG_TOP_K` 和 `RAG_SCORE_THRESHOLD`。
+`build_vector_store()` 创建以余弦距离为度量的 Chroma collection。collection 名称包含 Embedding provider、模型、知识目录、切分版本和切分参数的配置摘要，切换模型或切分策略时不会误用旧向量。`sync_vector_store()` 使用“来源 + chunk ID + 内容哈希”生成索引 ID，因此重复启动不会重复写入，chunk 修改和删除也会同步反映到索引。
+
+示例 `.env` 默认使用 FastEmbed 的 `BAAI/bge-small-zh-v1.5`，在 CPU 上生成 512 维真实语义向量。模型适配器先从本地缓存读取，缓存缺失时使用 FastEmbed 官方 Qdrant 镜像，避免隐式下载阻塞。LocalHash 只用于无需下载的自动化测试和消融基线。
+
+BM25 使用 LangChain `BM25Retriever` 与 `rank-bm25`，适合错误码、函数名、配置键和日志原文等精确匹配。RRF 不直接比较两类不可比的原始分数，而是按 `weight / (RRF_K + rank)` 融合名次。默认本地 reranker 综合查询覆盖率、技术标识符、章节标题、BM25 分和向量分；`flashrank` 使用多语言 ONNX CrossEncoder 在 CPU 上联合打分；`cross_encoder` 使用 Sentence Transformers 加载指定模型。任一模型重排异常都会回退到本地特征重排。
+
+`HybridDocumentRetriever` 实现 LangChain `BaseRetriever`，把上述完整流程封装为标准 `.invoke(query) -> list[Document]` 接口。LangGraph 节点使用结构化字典以保留详细分数，其他 LangChain Chain 则可直接复用 Retriever 接口。
 
 ### 7.3 代码线索
 
@@ -842,6 +909,16 @@ Markdown 文档
 - 给根因分析提供更接近研发排障的证据。
 - 给前端证据总线提供 CODE 证据。
 
+切分与检索链路：
+
+```text
+C 文件 -> tree-sitter 语法树 -> function_definition
+  -> 函数名、紧邻注释、起止行元数据
+  -> 函数级 LangChain Document
+  -> Chroma 向量 + BM25 + RRF + rerank
+  -> 函数内最佳行定位 -> 原文件绝对行号
+```
+
 ## 8. 评估体系
 
 对应图：
@@ -852,12 +929,18 @@ Markdown 文档
 
 - `scripts/evaluate.py`
 - `data/bugs/eval_cases.json`
+- `scripts/evaluate_retrieval.py`
+- `data/rag/retrieval_eval_cases.json`
 
 评估 case 包含：
 
 ```json
 {
   "case_id": "EVAL-001",
+  "case_origin": "synthetic",
+  "split": "test",
+  "label_status": "reviewed",
+  "annotator_count": 1,
   "device_model": "...",
   "firmware_version": "...",
   "symptom": "...",
@@ -930,6 +1013,50 @@ dhcp.md
 python scripts/evaluate.py --load-env --repeat 2
 ```
 
+### 8.6 证据引用、检索来源和复核路由
+
+- `citation_validity`：根因假设引用的 evidence ID 是否都存在于本次证据集合。
+- `retrieval_provenance_coverage`：DOC、BUG、CODE 证据是否携带 `retrieval_method`。
+- `review_routing_accuracy`：低置信度或证据不足 case 是否进入待复核分支。
+
+### 8.7 chunk 检索排序评估
+
+每条检索 case 包含用户查询和人工标注的 `relevant_chunk_ids`。脚本执行真实 Chroma 检索后，计算：
+
+- `Recall@K`：相关 chunk 中有多少进入前 K。
+- `Precision@K`：前 K 结果中有多少是相关 chunk。
+- `Hit Rate@K`：前 K 是否至少命中一个相关 chunk。
+- `MRR`：第一个相关 chunk 排名的倒数。
+- `nDCG@K`：综合考虑多个相关 chunk 的命中数量与排序位置。
+
+命令：
+
+```bash
+python scripts/evaluate_retrieval.py --top-k 5
+python scripts/evaluate_retrieval.py --load-env --top-k 5
+python scripts/evaluate_retrieval.py --top-k 3 --compare
+python scripts/evaluate_retrieval.py --top-k 3 --compare-embeddings
+```
+
+第一条命令使用默认混合检索建立可复现基线；第二条命令加载 `.env`；第三条执行向量、BM25、混合 RRF、混合 RRF+rerank 消融；第四条直接对比 LocalHash 与 BGE 中文语义向量。内置 20 条 case 包含困难负例和语义改写，指标只能证明当前演示链路，不代表生产效果。
+
+### 8.8 真实 case 数据治理
+
+`app/evaluation/case_schema.py` 使用 Pydantic 校验 case 来源、split、标注状态和字段完整性。`production_anonymized` case 必须满足：
+
+- 工单 ID 只保留 `sha256:<64 hex>` 不可逆哈希。
+- 至少两名标注人并完成裁决。
+- 脱敏动作包含人工复核。
+- 不残留真实 MAC、邮箱和非文档网段 IPv4。
+- 同一工单哈希不能重复，避免跨 split 泄漏。
+
+完整流程见 `docs/evaluation/real-case-intake.md`。校验命令：
+
+```bash
+python scripts/validate_eval_dataset.py
+python scripts/validate_eval_dataset.py --cases /secure/path/cases.json --require-production
+```
+
 ## 9. 测试体系
 
 目录：
@@ -997,6 +1124,13 @@ python scripts/evaluate.py --load-env --repeat 2
 - `tests/test_evaluate_metrics.py`
 
 验证评估集完整性和指标计算。
+
+### 9.7 AST、checkpoint 和指标测试
+
+- `tests/test_rag_code_parser.py`：函数名、注释和绝对行号切分。
+- `tests/test_review_workflow.py`：SQLite 暂停、查询、恢复和防重复审批。
+- `tests/test_metrics.py`：Prometheus 指标族、节点和 fallback 标签。
+- `tests/test_evaluation_case_schema.py`：生产 case 标注门槛和敏感信息扫描。
 
 运行全部测试：
 
@@ -1138,31 +1272,44 @@ plantuml docs/architecture/*.puml
 - 历史 Bug 检索。
 - 模块文档检索。
 - Chroma 持久化向量召回与自动增量同步。
-- 本地词法 Embedding / OpenAI-compatible 语义 Embedding 切换。
-- 向量检索异常时关键词 fallback。
+- BM25 召回、加权 RRF 融合和本地特征重排。
+- 可选 FlashRank / Sentence Transformers CrossEncoder 模型重排。
+- LocalHash / FastEmbed 中文 BGE / OpenAI-compatible Embedding 切换。
+- 文档、历史 Bug、代码统一混合检索协议。
+- 向量与 BM25 单路降级、模型重排降级和关键词 fallback。
 - 代码线索检索。
+- tree-sitter C 函数级切分和绝对行号定位。
+- Git 仓库递归索引、直接调用关系、条件编译上下文、构建配置和 Commit Diff 证据。
 - OpenAI-compatible LLM 接入。
 - Pydantic 结构化输出校验。
 - LLM fallback 到规则链。
+- 节点级自定义 trace 和结构化 fallback 原因。
+- 低置信度人工复核条件分支。
+- SQLite checkpointer、`interrupt()` 和 `Command(resume=...)` 持久化复核。
+- Redis/RQ 持久化任务、幂等、重试、超时、取消和队列内人工复核。
+- API Key 摘要认证、租户任务隔离和 checkpoint 所有权校验。
+- Prometheus HTTP、节点、检索、LLM、fallback、分析、复核和队列指标。
+- Grafana 仪表盘、Tempo Trace、Trace Context 跨队列传播和 Prometheus 告警规则。
+- 真实 case Pydantic 数据契约、带盐工单摘要、稳定编号脱敏、双人标注和独立仲裁导入脚本。
+- API/UI/Redis/Worker Docker Compose、可观测 Overlay 和 GitHub Actions CI。
 - 自动化测试。
 - 评估指标。
 
 仍可继续增强：
 
-- 增加 hybrid search：向量检索 + 关键词检索。
-- 增加 rerank。
-- 增加 LangSmith / 自定义 trace。
-- 将 LLM fallback 原因写入 state，便于前端展示。
-- 增加更多 eval cases。
-- 支持 Anthropic Messages API。
-- 支持 Docker 部署。
+- 在受控环境接入脱敏线上 case，并据此调优查询改写和领域 reranker。
+- 使用授权的真实固件仓库和脱敏线上 case 建立生产基线。
+- 把直接调用图升级为支持函数指针、动态注册和 `compile_commands.json` 的完整符号图。
+- 将单机 SQLite checkpoint 迁移到支持多主机、多副本的 PostgreSQL。
+- 接入集中日志、企业告警 Webhook、预算和模型成本统计。
+- 为每个租户拆分 Chroma collection、代码挂载和文档目录，并增加细粒度审批角色与限流。
 
 ## 13. 常用命令
 
 ### 启动后端
 
 ```bash
-cd /home/sdmc/AgentProject
+cd embedded-bug-analysis-agent
 set -a
 source .env
 set +a
@@ -1172,11 +1319,12 @@ set +a
 ### 启动前端
 
 ```bash
-cd /home/sdmc/AgentProject
+cd embedded-bug-analysis-agent
 set -a
 source .env
 set +a
 BUG_AGENT_API_URL=http://127.0.0.1:9000/analyze \
+BUG_AGENT_API_BASE_URL=http://127.0.0.1:9000 \
 BUG_AGENT_API_TIMEOUT_SECONDS=90 \
 .venv/bin/streamlit run ui/streamlit_app.py \
   --server.address 127.0.0.1 \
@@ -1202,6 +1350,18 @@ curl -X POST http://127.0.0.1:9000/analyze \
 
 ```bash
 .venv/bin/pytest -q
+```
+
+### 查看运行指标
+
+```bash
+curl -s http://127.0.0.1:9000/metrics
+```
+
+### 校验评估数据
+
+```bash
+.venv/bin/python scripts/validate_eval_dataset.py
 ```
 
 ### 跑规则链评估

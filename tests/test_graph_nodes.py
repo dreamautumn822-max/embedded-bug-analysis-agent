@@ -1,9 +1,11 @@
 from app.graph.nodes import (
+    assess_review_node,
     extract_bug_info_node,
     generate_hypotheses_node,
     generate_report_node,
     parse_logs_node,
     retrieve_related_docs_node,
+    route_after_review_assessment,
     search_bug_history_node,
     search_codebase_node,
 )
@@ -53,6 +55,23 @@ def test_related_docs_node_falls_back_when_chroma_fails(monkeypatch):
     assert result["related_docs"]
     assert result["related_docs"][0]["source"] == "dhcp.md"
     assert result["related_docs"][0]["retrieval_method"] == "keyword_fallback"
+    assert not result["related_docs"][0]["snippet"].startswith("#")
+
+
+def test_related_docs_node_records_single_path_degradation(monkeypatch):
+    monkeypatch.setattr(
+        "app.graph.nodes.retrieve_related_documents",
+        lambda query: [
+            {
+                "source": "dhcp.md",
+                "retrieval_warnings": ["vector_retrieval_failed"],
+            }
+        ],
+    )
+
+    result = retrieve_related_docs_node(_doc_retrieval_state())
+
+    assert result["fallback_reasons"][-1]["code"] == "vector_retrieval_failed"
 
 
 def test_graph_nodes_produce_report_for_dhcp():
@@ -97,4 +116,33 @@ def test_graph_nodes_produce_report_for_dhcp():
     assert state["related_docs"][0]["source"] == "dhcp.md"
     assert any(item.startswith("log: ") for item in state["evidence"])
     assert any(item.startswith("doc: dhcp.md") for item in state["evidence"])
+    assert {item["evidence_type"] for item in state["evidence_details"]} >= {
+        "log",
+        "doc",
+        "bug",
+        "code",
+    }
+    assert state["hypotheses"][0]["evidence_ids"]
+    assert set(state["hypotheses"][0]["evidence_ids"]) <= {
+        item["evidence_id"] for item in state["evidence_details"]
+    }
     assert "Bug 类型：network_dhcp" in state["final_report"]
+
+
+def test_low_confidence_unknown_bug_is_queued_for_review():
+    state = {
+        "bug_type": "unknown",
+        "hypotheses": [{"confidence": 0.35}],
+        "parsed_logs": {"evidence": ["unknown failure"]},
+        "related_docs": [],
+        "related_bugs": [],
+        "related_code": [],
+    }
+
+    result = assess_review_node(state)
+    state.update(result)
+
+    assert result["review_required"] is True
+    assert result["review_status"] == "pending"
+    assert len(result["review_reasons"]) >= 2
+    assert route_after_review_assessment(state) == "human_review"

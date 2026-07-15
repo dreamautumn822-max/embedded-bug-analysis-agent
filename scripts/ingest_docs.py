@@ -16,8 +16,10 @@ if __name__ == "__main__":
     load_dotenv(PROJECT_ROOT / ".env", override=False)
     settings = RAGSettings.from_env()
     store = build_vector_store(settings=settings)
-    document_count = len(store.get(include=[]).get("ids", []))
+    chunk_count = len(store.get(include=[]).get("ids", []))
     print(
-        f"Indexed {document_count} documents into {settings.persist_dir} "
-        f"(collection={collection_name(settings)}, provider={settings.embedding_provider})"
+        f"Indexed {chunk_count} chunks into {settings.persist_dir} "
+        f"(collection={collection_name(settings)}, "
+        f"provider={settings.embedding_provider}, "
+        f"chunk_size={settings.chunk_size}, overlap={settings.chunk_overlap})"
     )

@@ -5,6 +5,7 @@ class LLMHypothesis(BaseModel):
     title: str = Field(min_length=1)
     description: str = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
+    evidence_ids: list[str] = Field(default_factory=list)
 
 
 class LLMRootCauseResult(BaseModel):

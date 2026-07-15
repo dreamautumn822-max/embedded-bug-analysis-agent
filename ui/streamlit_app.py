@@ -1,5 +1,6 @@
 import os
 from html import escape
+from uuid import uuid4
 
 import requests
 import streamlit as st
@@ -81,6 +82,27 @@ div[data-testid="stTextArea"] textarea {
   border-color: #315533;
   background: #5c935f;
   color: #fff;
+}
+
+div[data-testid="stForm"]:has(input[aria-label="复核人"])
+button[data-testid="stBaseButton-primaryFormSubmit"] {
+  border-color: #466e48;
+  background: var(--signal-green);
+  color: #fff;
+}
+
+div[data-testid="stForm"]:has(input[aria-label="复核人"])
+button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
+  border-color: #315533;
+  background: #5c935f;
+  color: #fff;
+}
+
+div[data-testid="stForm"]:has(input[aria-label="复核人"])
+button[data-testid="stBaseButton-secondaryFormSubmit"] {
+  border-color: var(--fault-coral);
+  background: #fff;
+  color: #9f4e3e;
 }
 
 .console-hero {
@@ -333,6 +355,59 @@ div[data-testid="stTextArea"] textarea {
   margin-top: .75rem;
 }
 
+.review-gate {
+  border: 1px solid rgba(214, 180, 90, .58);
+  border-left: 6px solid var(--trace-amber);
+  border-radius: 8px;
+  background: rgba(255, 250, 232, .92);
+  padding: 1rem 1.05rem;
+  box-shadow: 0 18px 40px rgba(24, 32, 34, .08);
+}
+
+.review-gate-title {
+  font-size: 1.08rem;
+  font-weight: 850;
+  margin-bottom: .4rem;
+}
+
+.review-reason {
+  border-top: 1px solid rgba(38, 48, 51, .12);
+  padding: .48rem 0;
+  line-height: 1.45;
+}
+
+.queue-state {
+  border: 1px solid rgba(38, 48, 51, .18);
+  border-left: 6px solid var(--bus-blue);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .82);
+  padding: 1rem 1.05rem;
+  margin-bottom: .85rem;
+  box-shadow: 0 14px 34px rgba(24, 32, 34, .08);
+}
+
+.queue-state-kicker {
+  color: #4f7476;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.queue-state-title {
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 850;
+  margin: .35rem 0 .45rem;
+}
+
+.queue-state-meta {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .76rem;
+  overflow-wrap: anywhere;
+}
+
 .fix-item {
   border-left: 4px solid var(--signal-green);
   background: rgba(109, 163, 111, .1);
@@ -380,6 +455,20 @@ def api_timeout_seconds() -> int:
     return int(os.getenv("BUG_AGENT_API_TIMEOUT_SECONDS", "90"))
 
 
+def api_base_url() -> str:
+    configured = os.getenv("BUG_AGENT_API_BASE_URL")
+    if configured:
+        return configured.rstrip("/")
+    if API_URL.rstrip("/").endswith("/analyze"):
+        return API_URL.rstrip("/")[: -len("/analyze")]
+    return API_URL.rstrip("/")
+
+
+def api_headers() -> dict[str, str]:
+    api_key = os.getenv("BUG_AGENT_API_KEY", "").strip()
+    return {"X-API-Key": api_key} if api_key else {}
+
+
 def build_payload(
     *,
     device_model: str,
@@ -425,6 +514,111 @@ def group_evidence(evidence: list[str]) -> dict[str, list[str]]:
     return grouped
 
 
+def group_evidence_details(details: list[dict]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {
+        "logs": [],
+        "docs": [],
+        "bugs": [],
+        "code": [],
+        "other": [],
+    }
+    groups = {
+        "log": "logs",
+        "doc": "docs",
+        "bug": "bugs",
+        "code": "code",
+    }
+
+    for detail in details:
+        evidence_type = str(detail.get("evidence_type", "other"))
+        group = groups.get(evidence_type, "other")
+        grouped[group].append(_format_evidence_detail(detail))
+
+    return grouped
+
+
+def _format_evidence_detail(detail: dict) -> str:
+    evidence_type = str(detail.get("evidence_type", "other"))
+    source = str(detail.get("source", "unknown"))
+    content = str(detail.get("content", ""))
+
+    if evidence_type == "log":
+        return content
+    if evidence_type == "doc":
+        metadata = [source]
+        section = detail.get("section")
+        if section:
+            metadata.append(str(section))
+        score = detail.get("score")
+        if isinstance(score, (int, float)):
+            score_label = (
+                "重排分"
+                if detail.get("rerank_method")
+                in {
+                    "local_feature",
+                    "local_feature_fallback",
+                    "flashrank",
+                    "cross_encoder",
+                }
+                else "相关度"
+            )
+            metadata.append(f"{score_label} {score:.3f}")
+        method = _retrieval_method_label(
+            str(detail.get("retrieval_method", "")),
+            str(detail.get("rerank_method", "")),
+        )
+        if method:
+            metadata.append(method)
+        return f"{' / '.join(metadata)} - {content}"
+    if evidence_type == "code":
+        symbol = detail.get("symbol") or detail.get("section")
+        metadata = [source]
+        if symbol:
+            metadata.append(str(symbol))
+        if detail.get("code_kind") == "commit_diff":
+            commit_sha = str(detail.get("commit_sha") or "")[:12]
+            if commit_sha:
+                metadata.append(f"提交 {commit_sha}")
+            subject = detail.get("commit_subject")
+            if subject:
+                metadata.append(str(subject))
+        else:
+            callers = [str(item) for item in detail.get("callers", [])]
+            calls = [str(item) for item in detail.get("calls", [])]
+            if callers:
+                metadata.append(f"上游 {', '.join(callers[:3])}")
+            if calls:
+                metadata.append(f"调用 {', '.join(calls[:3])}")
+        return f"{' / '.join(metadata)} - {content}"
+    return f"{source} - {content}"
+
+
+def _retrieval_method_label(retrieval_method: str, rerank_method: str) -> str:
+    retrieval_labels = {
+        "hybrid_rrf_rerank": "向量+BM25+RRF",
+        "hybrid_rrf": "向量+BM25+RRF",
+        "vector_rerank": "向量召回",
+        "vector": "向量召回",
+        "bm25_rerank": "BM25召回",
+        "bm25": "BM25召回",
+    }
+    rerank_labels = {
+        "local_feature": "本地特征重排",
+        "local_feature_fallback": "本地降级重排",
+        "flashrank": "FlashRank模型重排",
+        "cross_encoder": "CrossEncoder重排",
+    }
+    parts = [
+        label
+        for label in (
+            retrieval_labels.get(retrieval_method),
+            rerank_labels.get(rerank_method),
+        )
+        if label
+    ]
+    return "+".join(parts)
+
+
 def render_html(markup: str) -> None:
     st.markdown(markup, unsafe_allow_html=True)
 
@@ -468,7 +662,39 @@ def render_result(result: dict) -> None:
     summary = escape(str(result.get("summary", "-")))
     root_causes = [escape(str(item)) for item in result.get("root_causes", [])]
     fix_suggestions = [escape(str(item)) for item in result.get("fix_suggestions", [])]
-    grouped_evidence = group_evidence([str(item) for item in result.get("evidence", [])])
+    evidence_details = [
+        item for item in result.get("evidence_details", []) if isinstance(item, dict)
+    ]
+    grouped_evidence = (
+        group_evidence_details(evidence_details)
+        if evidence_details
+        else group_evidence([str(item) for item in result.get("evidence", [])])
+    )
+    review_required = bool(result.get("review_required"))
+    review_status = str(result.get("review_status", "not_required"))
+    review_reasons = [escape(str(item)) for item in result.get("review_reasons", [])]
+    review_decision = result.get("review_decision") or {}
+    generation_mode = escape(str(result.get("generation_mode", "-")))
+    if review_status == "pending":
+        review_markup = (
+            '<div class="field-note">待人工复核：'
+            + "；".join(review_reasons)
+            + "</div>"
+        )
+    elif review_status in {"approved", "rejected"}:
+        decision_label = "已通过" if review_status == "approved" else "已驳回"
+        reviewer = escape(str(review_decision.get("reviewer", "-")))
+        review_markup = (
+            f'<div class="field-note">人工复核{decision_label} / {reviewer}</div>'
+        )
+    elif review_required:
+        review_markup = (
+            '<div class="field-note">需人工复核：'
+            + "；".join(review_reasons)
+            + "</div>"
+        )
+    else:
+        review_markup = '<div class="field-note" hidden></div>'
 
     root_cause_markup = "".join(
         f'<div class="fix-item">{item}</div>' for item in root_causes
@@ -484,8 +710,8 @@ def render_result(result: dict) -> None:
               <div class="confidence-number">{confidence_percent}%</div>
             </div>
             <div>
-              <div class="bug-chip">{bug_type}</div>
-              <div class="summary-title">{summary}</div>
+              <div class="bug-chip">{bug_type} / {generation_mode}</div>
+              <div class="summary-title">{summary}</div>{review_markup}
             </div>
           </div>
           <div class="fix-list">{root_cause_markup}</div>
@@ -503,6 +729,33 @@ def render_result(result: dict) -> None:
         f'<div class="fix-item">{item}</div>' for item in fix_suggestions
     ) or '<div class="fix-item">未返回修复建议。</div>'
     render_html(f'<div class="result-card"><div class="fix-list">{fix_markup}</div></div>')
+
+    trace_events = [
+        item for item in result.get("trace_events", []) if isinstance(item, dict)
+    ]
+    fallback_reasons = [
+        item for item in result.get("fallback_reasons", []) if isinstance(item, dict)
+    ]
+    if trace_events:
+        with st.expander("执行轨迹", expanded=False):
+            st.dataframe(
+                [
+                    {
+                        "节点": item.get("node", "-"),
+                        "状态": item.get("status", "-"),
+                        "耗时(ms)": item.get("duration_ms", 0),
+                        "输出数": item.get("output_count", 0),
+                    }
+                    for item in trace_events
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
+            for reason in fallback_reasons:
+                st.caption(
+                    f"{reason.get('node', '-')} / {reason.get('code', '-')}："
+                    f"{reason.get('message', '')}"
+                )
 
 
 def render_evidence_grid(grouped_evidence: dict[str, list[str]]) -> None:
@@ -569,6 +822,146 @@ def render_empty_board() -> None:
     )
 
 
+def render_pending_review(job: dict) -> None:
+    payload = job.get("review_payload") or {}
+    analysis_id = str(job.get("analysis_id", ""))
+    bug_type = escape(str(payload.get("bug_type", "unknown")))
+    generation_mode = escape(str(payload.get("generation_mode", "unknown")))
+    confidence = float(payload.get("confidence", 0.0) or 0.0)
+    hypothesis = payload.get("top_hypothesis") or {}
+    title = escape(str(hypothesis.get("title", "待复核根因")))
+    description = escape(str(hypothesis.get("description", "未返回根因描述。")))
+    reasons = [escape(str(item)) for item in payload.get("review_reasons", [])]
+    reason_markup = "".join(
+        f'<div class="review-reason">{reason}</div>' for reason in reasons
+    ) or '<div class="review-reason">系统未提供复核原因。</div>'
+    render_html(
+        f'<div class="section-title"><h3>人工复核门</h3></div>'
+        f'<div class="review-gate">'
+        f'<div class="bug-chip">{bug_type} / {generation_mode} / {confidence:.0%}</div>'
+        f'<div class="review-gate-title">{title}</div>'
+        f'<div>{description}</div>'
+        f'<div class="field-note">任务 {escape(analysis_id)}</div>'
+        f'{reason_markup}'
+        f'</div>'
+    )
+
+    with st.form(f"review_form_{analysis_id}"):
+        reviewer = st.text_input("复核人", value="")
+        comment = st.text_area("复核意见", value="", height=110)
+        approve_column, reject_column = st.columns(2)
+        with approve_column:
+            approved = st.form_submit_button(
+                "通过并生成报告",
+                type="primary",
+                use_container_width=True,
+            )
+        with reject_column:
+            rejected = st.form_submit_button(
+                "驳回并生成报告",
+                use_container_width=True,
+            )
+
+    if not (approved or rejected):
+        return
+    if not reviewer.strip():
+        st.error("复核人不能为空。")
+        return
+
+    queued_job_id = job.get("job_id")
+    if queued_job_id:
+        review_url = f"{api_base_url()}/v1/jobs/{queued_job_id}/review"
+    else:
+        review_url = f"{api_base_url()}/analyses/{analysis_id}/review"
+    try:
+        with st.spinner("正在保存复核结论并恢复分析流程..."):
+            response = requests.post(
+                review_url,
+                json={
+                    "approved": approved,
+                    "reviewer": reviewer.strip(),
+                    "comment": _optional_text(comment),
+                },
+                headers=api_headers(),
+                timeout=api_timeout_seconds(),
+            )
+            response.raise_for_status()
+            completed_job = response.json()
+            _store_analysis_job(completed_job)
+        st.rerun()
+    except requests.RequestException as exc:
+        st.error(f"提交人工复核失败：{exc}")
+
+
+def render_queued_job(job: dict) -> None:
+    status = str(job.get("status", "queued"))
+    status_labels = {
+        "queued": "等待 Worker",
+        "running": "正在分析",
+        "cancel_requested": "正在取消",
+        "cancelled": "任务已取消",
+        "timed_out": "任务已超时",
+        "failed": "任务执行失败",
+    }
+    title = status_labels.get(status, status)
+    job_id = escape(str(job.get("job_id", "unknown")))
+    attempts = int(job.get("attempts", 0) or 0)
+    operation = escape(str(job.get("operation", "analyze")))
+    error = escape(str(job.get("error") or ""))
+    error_markup = f'<div class="review-reason">{error}</div>' if error else ""
+    render_html(
+        '<div class="section-title"><h3>后台分析任务</h3></div>'
+        '<div class="queue-state">'
+        '<div class="queue-state-kicker">REDIS / RQ JOB</div>'
+        f'<div class="queue-state-title">{escape(title)}</div>'
+        f'<div class="queue-state-meta">任务 {job_id}</div>'
+        f'<div class="queue-state-meta">操作 {operation} / 尝试 {attempts}</div>'
+        f'{error_markup}'
+        '</div>'
+    )
+    refresh_column, cancel_column = st.columns(2)
+    with refresh_column:
+        refresh = st.button(
+            "刷新状态",
+            key=f"refresh_{job_id}",
+            icon=":material/refresh:",
+            use_container_width=True,
+        )
+    with cancel_column:
+        cancel = st.button(
+            "取消任务",
+            key=f"cancel_{job_id}",
+            icon=":material/cancel:",
+            disabled=status in {"cancelled", "timed_out", "failed", "cancel_requested"},
+            use_container_width=True,
+        )
+
+    if not (refresh or cancel):
+        return
+    method = requests.delete if cancel else requests.get
+    try:
+        with st.spinner("正在读取任务状态..."):
+            response = method(
+                f"{api_base_url()}/v1/jobs/{job_id}",
+                headers=api_headers(),
+                timeout=api_timeout_seconds(),
+            )
+            response.raise_for_status()
+            _store_analysis_job(response.json())
+        st.rerun()
+    except requests.RequestException as exc:
+        st.error(f"更新任务状态失败：{exc}")
+
+
+def _store_analysis_job(job: dict) -> None:
+    st.session_state["analysis_job"] = job
+    result = job.get("result")
+    if result:
+        st.session_state["analysis_result"] = result
+    else:
+        st.session_state.pop("analysis_result", None)
+
+
 def main() -> None:
     st.set_page_config(
         page_title="嵌入式网通设备 Bug 分析 Agent",
@@ -583,6 +976,13 @@ def main() -> None:
         render_html('<div class="section-title"><h3>故障现场输入</h3></div>')
         render_html('<div class="field-note">字段保持贴近真实工单：设备、版本、现象、日志、可选堆栈和模块提示。</div>')
 
+        execution_mode = st.segmented_control(
+            "执行方式",
+            options=["即时分析", "后台队列"],
+            default="后台队列",
+            selection_mode="single",
+        )
+
         with st.form("bug_analysis_form"):
             device_model = st.text_input("设备型号", value="AX3000-GW")
             firmware_version = st.text_input("固件版本", value="v2.1.7")
@@ -594,7 +994,17 @@ def main() -> None:
             logs = st.text_area("现场日志", value=DEFAULT_LOGS, height=265)
             stack_trace = st.text_area("堆栈信息（可选）", value="", height=95)
             module_hint = st.text_input("模块提示（可选）", value="network_dhcp")
-            submitted = st.form_submit_button("分析 Bug", type="primary", use_container_width=True)
+            enable_review = st.toggle(
+                "启用人工复核断点",
+                value=True,
+                disabled=execution_mode == "后台队列",
+            )
+            submitted = st.form_submit_button(
+                "分析 Bug",
+                type="primary",
+                icon=":material/troubleshoot:",
+                use_container_width=True,
+            )
 
     if submitted:
         payload = build_payload(
@@ -608,16 +1018,41 @@ def main() -> None:
 
         try:
             with st.spinner("正在分析日志、检索历史 Bug 和模块文档..."):
-                response = requests.post(API_URL, json=payload, timeout=api_timeout_seconds())
+                if execution_mode == "后台队列":
+                    endpoint = f"{api_base_url()}/v1/jobs"
+                else:
+                    endpoint = (
+                        f"{api_base_url()}/analyses" if enable_review else API_URL
+                    )
+                headers = api_headers()
+                if execution_mode == "后台队列":
+                    headers["Idempotency-Key"] = uuid4().hex
+                response = requests.post(
+                    endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=api_timeout_seconds(),
+                )
                 response.raise_for_status()
-                st.session_state["analysis_result"] = response.json()
+                response_data = response.json()
+                if execution_mode == "后台队列" or enable_review:
+                    _store_analysis_job(response_data)
+                else:
+                    st.session_state.pop("analysis_job", None)
+                    st.session_state["analysis_result"] = response_data
         except requests.RequestException as exc:
             st.session_state.pop("analysis_result", None)
+            st.session_state.pop("analysis_job", None)
             st.error(f"调用分析 API 失败：{exc}")
 
     with right:
+        job = st.session_state.get("analysis_job")
         result = st.session_state.get("analysis_result")
-        if result:
+        if job and job.get("status") == "pending_review":
+            render_pending_review(job)
+        elif job and job.get("job_id") and job.get("status") != "completed":
+            render_queued_job(job)
+        elif result:
             render_result(result)
         else:
             render_empty_board()

@@ -1,0 +1,180 @@
+services:
+  api:
+    build: .
+    env_file:
+      - .env
+    environment:
+      CHROMA_DIR: /app/.chroma
+      EMBEDDING_CACHE_DIR: /app/.cache/embeddings
+      RAG_RERANK_CACHE_DIR: /app/.cache/rerank
+      LANGGRAPH_CHECKPOINT_PATH: /app/run/bug_analysis_checkpoints.sqlite
+      REDIS_URL: redis://redis:6379/0
+      CODEBASE_DIR: /workspace/repository
+      PROMETHEUS_MULTIPROC_DIR: /app/run/prometheus
+    ports:
+      - "${BUG_AGENT_API_PORT:-8000}:8000"
+    volumes:
+      - chroma_data:/app/.chroma
+      - model_cache:/app/.cache
+      - checkpoint_data:/app/run
+      - ${CODE_REPOSITORY_PATH:-./data/codebase}:/workspace/repository:ro
+      - prometheus_multiproc:/app/run/prometheus
+    depends_on:
+      redis:
+        condition: service_healthy
+      metrics-init:
+        condition: service_healthy
+      rag-init:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ui:
+    build: .
+    env_file:
+      - .env
+    environment:
+      BUG_AGENT_API_URL: http://api:8000/analyze
+      BUG_AGENT_API_BASE_URL: http://api:8000
+      BUG_AGENT_API_TIMEOUT_SECONDS: 90
+      BUG_AGENT_API_KEY: ${BUG_AGENT_API_KEY:-}
+    command:
+      - streamlit
+      - run
+      - ui/streamlit_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+    ports:
+      - "${BUG_AGENT_UI_PORT:-8501}:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+  worker:
+    build: .
+    env_file:
+      - .env
+    environment:
+      CHROMA_DIR: /app/.chroma
+      EMBEDDING_CACHE_DIR: /app/.cache/embeddings
+      RAG_RERANK_CACHE_DIR: /app/.cache/rerank
+      LANGGRAPH_CHECKPOINT_PATH: /app/run/bug_analysis_checkpoints.sqlite
+      REDIS_URL: redis://redis:6379/0
+      CODEBASE_DIR: /workspace/repository
+      PROMETHEUS_MULTIPROC_DIR: /app/run/prometheus
+    command:
+      - rq
+      - worker
+      - --url
+      - redis://redis:6379/0
+      - --with-scheduler
+      - bug-analysis
+    volumes:
+      - chroma_data:/app/.chroma
+      - model_cache:/app/.cache
+      - checkpoint_data:/app/run
+      - ${CODE_REPOSITORY_PATH:-./data/codebase}:/workspace/repository:ro
+      - prometheus_multiproc:/app/run/prometheus
+    depends_on:
+      redis:
+        condition: service_healthy
+      metrics-init:
+        condition: service_healthy
+      rag-init:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - from redis import Redis; assert Redis.from_url('redis://redis:6379/0').ping()
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  rag-init:
+    build: .
+    env_file:
+      - .env
+    environment:
+      CHROMA_DIR: /app/.chroma
+      EMBEDDING_CACHE_DIR: /app/.cache/embeddings
+      RAG_RERANK_CACHE_DIR: /app/.cache/rerank
+      CODEBASE_DIR: /workspace/repository
+    command:
+      - sh
+      - -c
+      - python scripts/ingest_docs.py && touch /tmp/rag-ready && exec tail -f /dev/null
+    volumes:
+      - chroma_data:/app/.chroma
+      - model_cache:/app/.cache
+      - ${CODE_REPOSITORY_PATH:-./data/codebase}:/workspace/repository:ro
+    healthcheck:
+      test:
+        - CMD
+        - test
+        - -f
+        - /tmp/rag-ready
+      interval: 2s
+      timeout: 1s
+      retries: 60
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.2-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  metrics-init:
+    image: busybox:1.36.1
+    command:
+      - sh
+      - -c
+      - rm -f /metrics/*.db && chmod 0777 /metrics && touch /tmp/metrics-ready && exec tail -f /dev/null
+    volumes:
+      - prometheus_multiproc:/metrics
+    healthcheck:
+      test:
+        - CMD
+        - test
+        - -f
+        - /tmp/metrics-ready
+      interval: 2s
+      timeout: 1s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
+  model_cache:
+  checkpoint_data:
+  redis_data:
+  prometheus_multiproc:

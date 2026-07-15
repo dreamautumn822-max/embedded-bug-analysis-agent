@@ -4,8 +4,8 @@ title 嵌入式网通设备 Bug 分析 Agent - LLM 与规则兜底流程
 skinparam shadowing false
 
 start
-:generate_hypotheses_node 接收状态;
-:读取 LLMSettings.from_env();
+:根因生成节点接收分析状态;
+:读取模型运行配置;
 
 if (LLM_ENABLED 为 true\n且 base_url/api_key/model 完整？) then (就绪)
   :根据现象、日志、历史 Bug、\n文档、代码构建提示词;
@@ -16,6 +16,7 @@ if (LLM_ENABLED 为 true\n且 base_url/api_key/model 完整？) then (就绪)
       :使用 LLMRootCauseResult\n进行结构校验;
       if (Pydantic 校验成功？) then (是)
         :返回 LLM 根因假设\n和修复建议;
+        :生成模式设为 LLM;
         stop
       else (否)
         :结构校验错误;
@@ -30,7 +31,9 @@ else (未就绪)
   :LLM 未启用或配置不完整;
 endif
 
-:兜底调用 generate_root_cause_hypotheses();
+:写入稳定错误码、节点名和错误类型;
+:生成模式设为规则链;
+:兜底调用确定性根因分析规则;
 :根据 bug_type 构建确定性的修复建议;
 :返回规则链根因假设\n和修复建议;
 stop

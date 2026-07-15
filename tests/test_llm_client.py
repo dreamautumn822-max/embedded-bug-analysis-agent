@@ -72,6 +72,14 @@ def test_build_root_cause_prompt_includes_evidence_context():
             }
         ],
         related_code=[{"file": "netifd_reload.c", "line": 3, "snippet": "restart_dhcp_server();"}],
+        evidence_details=[
+            {
+                "evidence_id": "bug:BUG-018",
+                "evidence_type": "bug",
+                "source": "BUG-018",
+                "content": "DHCP starts too early",
+            }
+        ],
     )
 
     assert "network_dhcp" in prompt
@@ -79,6 +87,8 @@ def test_build_root_cause_prompt_includes_evidence_context():
     assert "BUG-018" in prompt
     assert "bridge ready 后启动" in prompt
     assert "netifd_reload.c:3" in prompt
+    assert "bug:BUG-018" in prompt
+    assert "evidence_ids" in prompt
 
 
 def test_generate_root_cause_with_llm_calls_openai_compatible_client():

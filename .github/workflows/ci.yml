@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Validate source and datasets
+        run: |
+          python -m compileall -q app scripts tests ui
+          python -m json.tool data/bugs/eval_cases.json >/dev/null
+          python -m json.tool data/rag/retrieval_eval_cases.json >/dev/null
+          python -m json.tool docs/evaluation/real-case-import.example.json >/dev/null
+          python -m json.tool observability/grafana/dashboards/bug-agent-overview.json >/dev/null
+          python scripts/validate_eval_dataset.py
+          cp .env.example .env
+          docker compose config -q
+          docker compose -f docker-compose.yml -f docker-compose.observability.yml config -q
+          git diff --check
+      - name: Run tests
+        env:
+          LLM_ENABLED: "false"
+          EMBEDDING_PROVIDER: local
+        run: pytest -q

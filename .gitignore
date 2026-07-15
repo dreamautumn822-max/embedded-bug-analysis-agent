@@ -15,6 +15,7 @@ htmlcov/
 
 # Runtime data
 .chroma/
+.cache/
 logs/
 run/
 *.log

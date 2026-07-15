@@ -1,0 +1,30 @@
+[
+  {
+    "case_id": "REAL-REPLACE-ME",
+    "case_origin": "production_anonymized",
+    "split": "test",
+    "label_status": "adjudicated",
+    "annotator_count": 2,
+    "source_ticket_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "sanitization_actions": [
+      "mac_address",
+      "ip_address",
+      "serial_number",
+      "manual_review"
+    ],
+    "device_model": "DEVICE_FAMILY_A",
+    "firmware_version": "VERSION_FAMILY_1",
+    "symptom": "脱敏后的故障现象",
+    "logs": "daemon: peer <MAC> failed on address <IP_ADDRESS>",
+    "stack_trace": null,
+    "module_hint": "network_module",
+    "expected_bug_type": "unknown",
+    "expected_root_cause_keywords": [
+      "待替换的根因关键词"
+    ],
+    "expected_evidence_terms": [
+      "待替换的证据关键词"
+    ],
+    "expected_review_required": true
+  }
+]

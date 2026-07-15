@@ -41,6 +41,24 @@ def generate_root_cause_hypotheses(
             }
         ]
 
+    if bug_type == "management_tr069":
+        return [
+            {
+                "title": "TR-069 客户端继续使用过期 DNS 解析结果",
+                "description": "ACS 域名或 DNS 配置变化后 resolver cache 未刷新，Inform 请求仍连接旧地址并失败。",
+                "confidence": 0.79,
+            }
+        ]
+
+    if bug_type == "upgrade_regression":
+        return [
+            {
+                "title": "固件升级配置迁移规则缺失",
+                "description": "旧版本配置键未映射到新 schema，升级后运行配置缺失并触发业务回归。",
+                "confidence": 0.74,
+            }
+        ]
+
     return [
         {
             "title": "需要补充日志和模块信息",

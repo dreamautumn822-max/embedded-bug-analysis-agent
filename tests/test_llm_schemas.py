@@ -12,6 +12,7 @@ def test_llm_root_cause_result_accepts_valid_payload():
                     "title": "DHCP starts before bridge ready",
                     "description": "DHCP server restarts while br-lan is still blocking.",
                     "confidence": 0.91,
+                    "evidence_ids": ["bug:BUG-018", "doc:dhcp.md::startup::000"],
                 }
             ],
             "fix_suggestions": ["Wait for br-lan forwarding before restarting DHCP."],
@@ -19,6 +20,10 @@ def test_llm_root_cause_result_accepts_valid_payload():
     )
 
     assert result.hypotheses[0].confidence == 0.91
+    assert result.hypotheses[0].evidence_ids == [
+        "bug:BUG-018",
+        "doc:dhcp.md::startup::000",
+    ]
     assert result.fix_suggestions == ["Wait for br-lan forwarding before restarting DHCP."]
 
 

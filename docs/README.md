@@ -7,6 +7,8 @@
 ## 详细设计文档
 
 - [嵌入式网通设备 Bug 分析 Agent 设计与实现详解](architecture/design-and-implementation.md)
+- [真实故障 Case 接入与评估规范](evaluation/real-case-intake.md)
+- [生产化扩展与运行手册](production/productionization.md)
 
 这份文档是主文档，包含：
 
@@ -51,6 +53,10 @@
 - [LLM 调用与规则兜底流程图](architecture/llm-fallback-flow.puml)
 - [评估流程图](architecture/evaluation-flow.puml)
 - [运行部署图](architecture/runtime-deployment.puml)
+- [生产化运行部署图](architecture/production-runtime.puml)
+- [后台任务与复核时序图](architecture/queued-analysis-sequence.puml)
+- [Git 代码索引流程图](architecture/git-code-index-flow.puml)
+- [真实 Case 接入流程图](architecture/real-case-intake-flow.puml)
 
 ## 推荐阅读顺序
 

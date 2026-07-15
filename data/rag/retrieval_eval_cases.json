@@ -1,0 +1,153 @@
+[
+  {
+    "case_id": "RAG-001",
+    "query": "netifd reload 后 br-lan 还没有 ready 就启动 DHCP，日志出现 lease allocation failed",
+    "relevant_chunk_ids": [
+      "dhcp.md::DHCP 模块说明 > 启动依赖与时序::000",
+      "dhcp.md::DHCP 模块说明 > 现场排查::000"
+    ]
+  },
+  {
+    "case_id": "RAG-002",
+    "query": "固件升级后 DHCP 地址池为空，旧配置 pool_start pool_end 没有迁移到新 schema",
+    "relevant_chunk_ids": [
+      "dhcp.md::DHCP 模块说明 > 地址池与配置迁移::000",
+      "upgrade.md::固件升级与配置迁移说明 > DHCP 地址池迁移::000"
+    ]
+  },
+  {
+    "case_id": "RAG-003",
+    "query": "WAN 链路稳定但 PPPoE 返回 auth failed，应该检查账号密码还是状态机",
+    "relevant_chunk_ids": [
+      "pppoe.md::PPPoE 模块说明 > 认证失败::000"
+    ]
+  },
+  {
+    "case_id": "RAG-004",
+    "query": "WAN link flap 恢复后 PPPoE retry timer stopped，认证失败后不再重新拨号",
+    "relevant_chunk_ids": [
+      "pppoe.md::PPPoE 模块说明 > Link flap 与重试定时器::000"
+    ]
+  },
+  {
+    "case_id": "RAG-005",
+    "query": "PPPoE MTU 1492 配置错误导致部分业务访问异常，需要采集哪些拨号日志",
+    "relevant_chunk_ids": [
+      "pppoe.md::PPPoE 模块说明 > MTU 与现场排查::000"
+    ]
+  },
+  {
+    "case_id": "RAG-006",
+    "query": "自动信道切换期间 station table 被提前清理，客户端批量 disconnected",
+    "relevant_chunk_ids": [
+      "wifi.md::Wi-Fi 模块说明 > 自动信道切换::000"
+    ]
+  },
+  {
+    "case_id": "RAG-007",
+    "query": "DFS radar 触发换信道，同时出现 firmware crash 和 driver reset，如何区分正常切换",
+    "relevant_chunk_ids": [
+      "wifi.md::Wi-Fi 模块说明 > DFS 与驱动重启::000"
+    ]
+  },
+  {
+    "case_id": "RAG-008",
+    "query": "TR-069 修改 ACS 域名 DNS 后仍然访问旧地址，重启 client 才恢复",
+    "relevant_chunk_ids": [
+      "tr069.md::TR-069 模块说明 > DNS 缓存与 ACS 地址::000"
+    ]
+  },
+  {
+    "case_id": "RAG-009",
+    "query": "TR-069 TLS 握手失败，需要检查 CA、证书有效期、SNI 和设备时间",
+    "relevant_chunk_ids": [
+      "tr069.md::TR-069 模块说明 > 认证与证书::000"
+    ]
+  },
+  {
+    "case_id": "RAG-010",
+    "query": "固件升级迁移要保留 PPPoE VLAN MTU 以及 Wi-Fi SSID 密码和 Mesh 参数",
+    "relevant_chunk_ids": [
+      "upgrade.md::固件升级与配置迁移说明 > WAN 与 Wi-Fi 配置迁移::000"
+    ]
+  },
+  {
+    "case_id": "RAG-011",
+    "query": "配置迁移失败后如何做 schema 校验、迁移报告和回滚，避免半迁移状态",
+    "relevant_chunk_ids": [
+      "upgrade.md::固件升级与配置迁移说明 > 校验、回滚与回归::000"
+    ]
+  },
+  {
+    "case_id": "RAG-012",
+    "query": "TR-069 Inform 从读取 ACS 配置到 DNS、TCP TLS、HTTP 认证的完整调用链",
+    "relevant_chunk_ids": [
+      "tr069.md::TR-069 模块说明 > Inform 调用链::000"
+    ]
+  },
+  {
+    "case_id": "RAG-013",
+    "difficulty": "hard_negative",
+    "query": "固件升级后不是 bridge 启动时序问题，DHCP 地址池为空，旧版 pool_start pool_end 没写入新配置",
+    "relevant_chunk_ids": [
+      "dhcp.md::DHCP 模块说明 > 地址池与配置迁移::000",
+      "upgrade.md::固件升级与配置迁移说明 > DHCP 地址池迁移::000"
+    ]
+  },
+  {
+    "case_id": "RAG-014",
+    "difficulty": "hard_negative",
+    "query": "WAN link 一直稳定，retry timer 正常，PPPoE 服务端明确返回 auth reject，请检查账号密码",
+    "relevant_chunk_ids": [
+      "pppoe.md::PPPoE 模块说明 > 认证失败::000"
+    ]
+  },
+  {
+    "case_id": "RAG-015",
+    "difficulty": "hard_negative",
+    "query": "没有 DFS radar 和 driver reset，只在自动信道优化时 station table 被清理导致客户端掉线",
+    "relevant_chunk_ids": [
+      "wifi.md::Wi-Fi 模块说明 > 自动信道切换::000"
+    ]
+  },
+  {
+    "case_id": "RAG-016",
+    "difficulty": "hard_negative",
+    "query": "ACS 域名解析和 TLS 都正常，但设备周期任务没有发出 TR-069 Inform 上报",
+    "relevant_chunk_ids": [
+      "tr069.md::TR-069 模块说明 > Inform 调用链::000"
+    ]
+  },
+  {
+    "case_id": "RAG-017",
+    "difficulty": "semantic_paraphrase",
+    "query": "局域网终端始终拿不到地址，服务拉起时网桥还处在阻塞态，稍后才转发",
+    "relevant_chunk_ids": [
+      "dhcp.md::DHCP 模块说明 > 启动依赖与时序::000"
+    ]
+  },
+  {
+    "case_id": "RAG-018",
+    "difficulty": "semantic_paraphrase",
+    "query": "宽带线路短暂中断后已经恢复，但设备不再发起新的拨号认证尝试",
+    "relevant_chunk_ids": [
+      "pppoe.md::PPPoE 模块说明 > Link flap 与重试定时器::000"
+    ]
+  },
+  {
+    "case_id": "RAG-019",
+    "difficulty": "semantic_paraphrase",
+    "query": "无线自动优化频点时在线终端被清空，用户需要重新关联接入点",
+    "relevant_chunk_ids": [
+      "wifi.md::Wi-Fi 模块说明 > 自动信道切换::000"
+    ]
+  },
+  {
+    "case_id": "RAG-020",
+    "difficulty": "semantic_paraphrase",
+    "query": "远程管理服务器域名变更后设备仍连接原来的网络地址，重启进程才正常",
+    "relevant_chunk_ids": [
+      "tr069.md::TR-069 模块说明 > DNS 缓存与 ACS 地址::000"
+    ]
+  }
+]

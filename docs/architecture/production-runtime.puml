@@ -1,0 +1,50 @@
+@startuml
+title 生产化运行部署结构
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+actor "分析人员" as User
+
+node "访问层" {
+  component "网页控制台" as UI
+  component "接口调用方" as Client
+}
+
+node "应用层" {
+  component "分析接口服务" as API
+  component "后台任务执行器" as Worker
+}
+
+database "任务与幂等存储\nRedis" as Redis
+database "状态图断点\nSQLite WAL" as Checkpoint
+database "向量知识库\nChroma" as Chroma
+folder "只读固件仓库" as Repo
+
+cloud "模型服务" as LLM
+
+node "可观测平台" {
+  component "指标采集与告警\nPrometheus" as Prometheus
+  component "链路追踪存储\nTempo" as Tempo
+  component "仪表盘\nGrafana" as Grafana
+  component "告警管理\nAlertmanager" as Alertmanager
+}
+
+User --> UI : 提交故障与复核结论
+User --> Client : 调用接口
+UI --> API : 密钥认证请求
+Client --> API : 密钥认证请求
+API --> Redis : 创建、查询、取消任务
+Redis --> Worker : 分发后台任务
+Worker --> Checkpoint : 保存与恢复状态图
+Worker --> Chroma : 混合检索与重排
+Worker --> Repo : 读取函数、配置和提交差异
+Worker --> LLM : 生成结构化根因
+API --> Tempo : 上报接口链路
+Worker --> Tempo : 续接任务与节点链路
+Prometheus --> API : 抓取运行指标
+Prometheus --> Alertmanager : 发送告警
+Grafana --> Prometheus : 查询指标
+Grafana --> Tempo : 查询链路
+
+@enduml

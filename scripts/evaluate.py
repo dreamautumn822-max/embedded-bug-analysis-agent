@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.graph.bug_analysis_graph import analyze_bug
+from app.evaluation import validate_evaluation_cases
 from app.tools.log_parser import parse_syslog
 
 
@@ -39,6 +40,21 @@ def evaluate_case_result(case: dict[str, Any], result: dict[str, Any], parser_ok
 
     root_keywords = case.get("expected_root_cause_keywords", [])
     evidence_terms = case.get("expected_evidence_terms", [])
+    evidence_ids = {
+        detail.get("evidence_id")
+        for detail in result.get("evidence_details", [])
+        if detail.get("evidence_id")
+    }
+    cited_ids = {
+        evidence_id
+        for hypothesis in result.get("hypotheses", [])
+        for evidence_id in hypothesis.get("evidence_ids", [])
+    }
+    retrieved_evidence = [
+        detail
+        for detail in result.get("evidence_details", [])
+        if detail.get("evidence_type") in {"doc", "bug", "code"}
+    ]
 
     return {
         "case_id": case["case_id"],
@@ -50,6 +66,11 @@ def evaluate_case_result(case: dict[str, Any], result: dict[str, Any], parser_ok
         "evidence_ok": _all_terms_present(evidence_text, evidence_terms)
         if evidence_terms
         else bool(result.get("evidence")),
+        "citation_validity_ok": bool(cited_ids) and cited_ids <= evidence_ids,
+        "retrieval_provenance_ok": bool(retrieved_evidence)
+        and all(detail.get("retrieval_method") for detail in retrieved_evidence),
+        "review_routing_ok": result.get("review_required", False)
+        == case.get("expected_review_required", False),
     }
 
 
@@ -92,6 +113,8 @@ def run_evaluation(cases: list[dict[str, Any]], repeat: int) -> dict[str, Any]:
                 f"parser_ok={score['parser_ok']}, "
                 f"root_cause_ok={score['root_cause_ok']}, "
                 f"evidence_ok={score['evidence_ok']}"
+                f", citation_validity_ok={score['citation_validity_ok']}, "
+                f"review_routing_ok={score['review_routing_ok']}"
             )
 
         stable_cases += int(summarize_stability(case_runs))
@@ -104,6 +127,9 @@ def run_evaluation(cases: list[dict[str, Any]], repeat: int) -> dict[str, Any]:
         "parser_coverage": _rate(scores, "parser_ok"),
         "root_cause_hit_rate": _rate(scores, "root_cause_ok"),
         "evidence_coverage": _rate(scores, "evidence_ok"),
+        "citation_validity": _rate(scores, "citation_validity_ok"),
+        "retrieval_provenance_coverage": _rate(scores, "retrieval_provenance_ok"),
+        "review_routing_accuracy": _rate(scores, "review_routing_ok"),
         "output_stability": stable_cases / len(cases),
     }
 
@@ -115,9 +141,12 @@ def main() -> None:
     if args.disable_llm:
         os.environ["LLM_ENABLED"] = "false"
 
-    cases = json.loads(args.cases.read_text(encoding="utf-8"))
-    if not cases:
-        raise SystemExit("No evaluation cases found.")
+    cases = [
+        case.model_dump()
+        for case in validate_evaluation_cases(
+            json.loads(args.cases.read_text(encoding="utf-8"))
+        )
+    ]
 
     summary = run_evaluation(cases, repeat=args.repeat)
     for key, value in summary.items():

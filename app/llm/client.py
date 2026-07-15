@@ -1,5 +1,6 @@
 import json
 import re
+from time import perf_counter
 from typing import Any
 
 from openai import OpenAI
@@ -7,6 +8,8 @@ from pydantic import ValidationError
 
 from app.llm.config import LLMSettings
 from app.llm.schemas import LLMRootCauseResult
+from app.observability.metrics import observe_llm
+from app.observability.tracing import start_span
 
 
 class LLMGenerationError(RuntimeError):
@@ -21,6 +24,7 @@ def build_root_cause_prompt(
     related_bugs: list[dict],
     related_docs: list[dict],
     related_code: list[dict],
+    evidence_details: list[dict] | None = None,
 ) -> str:
     log_patterns = parsed_logs.get("error_patterns", [])
     log_events = parsed_logs.get("events", [])
@@ -34,7 +38,8 @@ def build_root_cause_prompt(
             "必须返回 JSON，不要输出 Markdown，不要输出额外解释。",
             "",
             "JSON schema:",
-            '{"hypotheses":[{"title":"string","description":"string","confidence":0.0}],"fix_suggestions":["string"]}',
+            '{"hypotheses":[{"title":"string","description":"string","confidence":0.0,"evidence_ids":["string"]}],"fix_suggestions":["string"]}',
+            "evidence_ids 只能引用下方可引用证据中的 evidence_id。",
             "",
             f"Bug 类型: {bug_type}",
             f"问题现象: {symptom}",
@@ -54,6 +59,12 @@ def build_root_cause_prompt(
             "",
             "代码线索:",
             _format_code_records(related_code),
+            "",
+            "可引用证据:",
+            _format_records(
+                evidence_details or [],
+                ["evidence_id", "evidence_type", "source", "content"],
+            ),
         ]
     )
 
@@ -67,6 +78,7 @@ def generate_root_cause_with_llm(
     related_bugs: list[dict],
     related_docs: list[dict],
     related_code: list[dict],
+    evidence_details: list[dict] | None = None,
     client: Any | None = None,
 ) -> LLMRootCauseResult:
     if not settings.is_ready:
@@ -80,28 +92,69 @@ def generate_root_cause_with_llm(
         related_bugs=related_bugs,
         related_docs=related_docs,
         related_code=related_code,
+        evidence_details=evidence_details,
     )
 
-    try:
-        response = client.chat.completions.create(
-            model=settings.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你是严谨的嵌入式网通设备 Bug 分析专家，只输出可解析 JSON。",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=settings.temperature,
-            timeout=settings.timeout_seconds,
-        )
-    except Exception as exc:  # pragma: no cover - exact SDK exceptions vary by provider
-        raise LLMGenerationError(f"LLM request failed: {exc}") from exc
+    started_at = perf_counter()
+    with start_span(
+        "llm.root_cause",
+        {
+            "gen_ai.system": "openai-compatible",
+            "gen_ai.request.model": settings.model,
+        },
+    ) as span:
+        try:
+            response = client.chat.completions.create(
+                model=settings.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是严谨的嵌入式网通设备 Bug 分析专家，只输出可解析 JSON。",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=settings.temperature,
+                timeout=settings.timeout_seconds,
+            )
+        except Exception as exc:  # pragma: no cover - provider exceptions vary
+            span.set_attribute("gen_ai.response.status", "error")
+            observe_llm(
+                model=settings.model,
+                status="error",
+                duration_seconds=perf_counter() - started_at,
+            )
+            raise LLMGenerationError(f"LLM request failed: {exc}") from exc
 
-    content = response.choices[0].message.content
-    if not content:
-        raise LLMGenerationError("LLM returned empty content")
-    return parse_llm_json(content)
+        usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        content = response.choices[0].message.content
+        try:
+            if not content:
+                raise LLMGenerationError("LLM returned empty content")
+            result = parse_llm_json(content)
+        except LLMGenerationError:
+            span.set_attribute("gen_ai.response.status", "invalid_output")
+            observe_llm(
+                model=settings.model,
+                status="invalid_output",
+                duration_seconds=perf_counter() - started_at,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+            raise
+
+        span.set_attribute("gen_ai.response.status", "success")
+        span.set_attribute("gen_ai.usage.input_tokens", prompt_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", completion_tokens)
+        observe_llm(
+            model=settings.model,
+            status="success",
+            duration_seconds=perf_counter() - started_at,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        return result
 
 
 def parse_llm_json(content: str) -> LLMRootCauseResult:

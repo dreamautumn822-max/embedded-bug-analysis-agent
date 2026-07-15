@@ -4,29 +4,38 @@ title 嵌入式网通设备 Bug 分析 Agent - 评估流程
 skinparam shadowing false
 
 actor "开发者" as Dev
-database "data/bugs/eval_cases.json" as Cases
-participant "scripts/evaluate.py" as Eval
-participant "parse_syslog()" as Parser
-participant "analyze_bug()" as Agent
-participant "evaluate_case_result()\n评估指标计算" as Metrics
+database "合成端到端评估集\n5 条常规与复核用例" as Cases
+database "受控位置的真实脱敏用例" as RealCases
+database "检索评估集\n20 条普通、困难负例和语义改写" as RagCases
+participant "数据契约与脱敏校验器" as Validator
+participant "端到端评估脚本" as Eval
+participant "Bug 分析 Agent" as Agent
+participant "指标计算器" as Metrics
+participant "检索消融脚本" as RagEval
+participant "统一混合检索器" as Retriever
 
-Dev -> Eval : python scripts/evaluate.py\n--disable-llm / --load-env --repeat N
-Eval -> Cases : 加载评估用例
+Dev -> Validator : 校验来源、切分、标注和脱敏
+Validator -> Cases : 校验合成基线
+Validator -> RealCases : 扫描真实用例的敏感信息
+Validator --> Dev : 输出来源和标签分布
 
-loop 遍历每个用例
-  Eval -> Parser : 解析日志
-  Parser --> Eval : parser_ok 输入
-
-  loop 重复 N 次
-    Eval -> Agent : analyze_bug(case)
-    Agent --> Eval : BugAnalysisState
-    Eval -> Metrics : 对比期望结果和实际结果
-    Metrics --> Eval : classification_ok\nroot_cause_ok\nevidence_ok\nparser_ok
-  end
-
-  Eval -> Eval : 汇总同一用例多次运行稳定性
+Dev -> Eval : 运行规则链或真实模型评估
+Eval -> Cases : 加载合成基线
+Eval -> RealCases : 可选加载真实脱敏用例
+loop 每条用例，可重复多次
+  Eval -> Agent : 提交设备现象和日志
+  Agent --> Eval : 分析状态
+  Eval -> Metrics : 比对预测与标注
+  Metrics --> Eval : 分类、解析、根因、证据\n引用有效性、来源覆盖、复核路由
 end
+Eval --> Dev : 按来源分别汇总准确率、覆盖率和稳定性
 
-Eval --> Dev : classification_accuracy\nparser_coverage\nroot_cause_hit_rate\nevidence_coverage\noutput_stability
-
+Dev -> RagEval : 运行检索策略或向量模型消融
+RagEval -> RagCases : 加载查询与相关分块标注
+loop 每条检索用例
+  RagEval -> Retriever : 向量 / BM25 / 排名融合 / 重排
+  Retriever --> RagEval : 排序结果与耗时
+  RagEval -> Metrics : 计算前 K 排序质量
+end
+RagEval --> Dev : 召回率、准确率、命中率\n平均倒数排名、折损累计增益、平均与分位延迟
 @enduml

@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Optional Sentence Transformers runtime for RAG_RERANK_PROVIDER=cross_encoder.
+sentence-transformers==5.6.0

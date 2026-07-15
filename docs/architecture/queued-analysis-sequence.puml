@@ -1,0 +1,43 @@
+@startuml
+title 后台分析、人工复核与恢复时序
+
+actor "分析人员" as User
+participant "分析接口服务" as API
+database "任务存储与队列" as Redis
+participant "后台任务执行器" as Worker
+participant "状态图" as Graph
+database "断点存储" as Checkpoint
+
+User -> API : 提交故障、密钥和幂等键
+API -> API : 校验密钥并确定租户
+API -> Redis : 原子占用幂等键
+API -> Redis : 保存任务并入队
+API --> User : 返回已受理和任务编号
+
+Redis -> Worker : 分发分析任务
+Worker -> Redis : 状态改为运行中
+Worker -> Graph : 执行故障分析状态流
+Graph -> Checkpoint : 保存每个节点状态
+
+alt 证据充分
+  Graph --> Worker : 返回完整报告
+  Worker -> Redis : 保存完成状态和报告
+else 需要人工复核
+  Graph -> Checkpoint : 保存中断点
+  Graph --> Worker : 返回待复核载荷
+  Worker -> Redis : 状态改为待复核
+  User -> API : 提交通过或驳回结论
+  API -> Redis : 复核任务重新入队
+  Redis -> Worker : 分发复核任务
+  Worker -> Graph : 使用恢复命令继续状态流
+  Graph -> Checkpoint : 读取原中断状态
+  Graph --> Worker : 生成带审计信息的报告
+  Worker -> Redis : 保存完成状态和报告
+end
+
+User -> API : 查询任务
+API -> Redis : 按租户读取任务
+Redis --> API : 返回任务状态和结果
+API --> User : 返回报告
+
+@enduml

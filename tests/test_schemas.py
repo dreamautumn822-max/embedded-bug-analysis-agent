@@ -23,6 +23,7 @@ def test_bug_analyze_response_shape():
         evidence=["log: dhcpd lease allocation failed"],
         fix_suggestions=["wait bridge ready before restarting DHCP server"],
         confidence=0.82,
+        generation_mode="rule",
     )
 
     assert response.bug_type == "network_dhcp"

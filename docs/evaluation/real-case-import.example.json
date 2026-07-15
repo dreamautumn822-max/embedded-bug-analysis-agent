@@ -1,0 +1,36 @@
+[
+  {
+    "source_ticket_id": "INTERNAL-TICKET-DEMO-001",
+    "split": "test",
+    "device_model": "Gateway serial=GW-DEMO-001",
+    "firmware_version": "v3.2.1",
+    "symptom": "Account=user-demo cannot obtain an address after upgrade",
+    "logs": "dhcpd: request from 00:11:22:33:44:55 on 10.20.30.1; contact ops@example.com",
+    "stack_trace": null,
+    "module_hint": "hostname=gw-customer-01 network_dhcp",
+    "annotations": [
+      {
+        "annotator_ref": "reviewer-a",
+        "expected_bug_type": "network_dhcp",
+        "expected_root_cause_keywords": ["bridge", "DHCP"],
+        "expected_evidence_terms": ["dhcpd"],
+        "expected_review_required": false
+      },
+      {
+        "annotator_ref": "reviewer-b",
+        "expected_bug_type": "network_dhcp",
+        "expected_root_cause_keywords": ["bridge", "lease"],
+        "expected_evidence_terms": ["dhcpd"],
+        "expected_review_required": false
+      }
+    ],
+    "adjudication": {
+      "adjudicator_ref": "reviewer-c",
+      "expected_bug_type": "network_dhcp",
+      "expected_root_cause_keywords": ["bridge", "DHCP"],
+      "expected_evidence_terms": ["dhcpd"],
+      "expected_review_required": false
+    },
+    "manual_review_confirmed": true
+  }
+]

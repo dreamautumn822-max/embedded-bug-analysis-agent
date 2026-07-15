@@ -1,0 +1,94 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Analysis requests / 5m",
+      "id": 1,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(increase(bug_agent_analysis_runs_total[5m]))", "refId": "A"}
+      ],
+      "gridPos": {"h": 7, "w": 6, "x": 0, "y": 0}
+    },
+    {
+      "type": "stat",
+      "title": "Fallback rate / 10m",
+      "id": 2,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+      "targets": [
+        {
+          "expr": "sum(rate(bug_agent_node_runs_total{node=\"generate_hypotheses\",status=\"fallback\"}[10m])) / clamp_min(sum(rate(bug_agent_node_runs_total{node=\"generate_hypotheses\"}[10m])), 0.001)",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"h": 7, "w": 6, "x": 6, "y": 0}
+    },
+    {
+      "type": "stat",
+      "title": "Queue depth",
+      "id": 3,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(bug_agent_queue_depth)", "refId": "A"}
+      ],
+      "gridPos": {"h": 7, "w": 6, "x": 12, "y": 0}
+    },
+    {
+      "type": "stat",
+      "title": "LLM invalid output / 10m",
+      "id": 4,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(increase(bug_agent_llm_requests_total{status=\"invalid_output\"}[10m]))", "refId": "A"}
+      ],
+      "gridPos": {"h": 7, "w": 6, "x": 18, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP p50 / p95 latency",
+      "id": 5,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(bug_agent_http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(bug_agent_http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 7}
+    },
+    {
+      "type": "timeseries",
+      "title": "Retrieval duration by source",
+      "id": 6,
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "targets": [
+        {
+          "expr": "sum(rate(bug_agent_retrieval_duration_seconds_sum[5m])) by (source_type) / clamp_min(sum(rate(bug_agent_retrieval_duration_seconds_count[5m])) by (source_type), 0.001)",
+          "legendFormat": "{{source_type}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 7}
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": ["ai-agent", "rag", "langgraph"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "title": "Embedded Bug Agent Overview",
+  "uid": "embedded-bug-agent",
+  "version": 1
+}
